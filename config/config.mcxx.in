@@ -1,0 +1,15 @@
+/*!if PLAIN*/
+/*!include config.plain*/
+/*!endif*/
+/*!if NANOS*/
+/*!include config.nanos_omp*/
+/*!endif*/
+/*!if ACOTES*/
+/*!include config.acotes*/
+/*!endif*/
+/*!if NEBELUNG*/
+/*!include config.stm_nebelung*/
+/*!endif*/
+/*!if SUPERSCALAR*/
+/*!include config.superscalar*/
+/*!endif*/

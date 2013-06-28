@@ -1,0 +1,73 @@
+/*
+    Mercurium C/C++ Compiler
+    Copyright (C) 2006-2008 - Roger Ferrer Ibanez <roger.ferrer@bsc.es>
+    Barcelona Supercomputing Center - Centro Nacional de Supercomputacion
+    Universitat Politecnica de Catalunya
+
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 2 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software
+    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+*/
+%{
+#include <stdlib.h>
+#include <string.h>
+#include "cxx-driver.h"
+#include "cxx-utils.h"
+
+#define DEBUG_OPTION_REF(x) (offsetof(struct debug_options_tag, x))
+%}
+
+struct debug_flags_list_t;
+%%
+"abort_on_ice", DEBUG_OPTION_REF(abort_on_ice), "When an error condition is detected, compiler will raise SIGABRT signal"
+"print_scope", DEBUG_OPTION_REF(print_scope), "Prints scope of the translation unit"
+"enable_debug_code", DEBUG_OPTION_REF(enable_debug_code), "Enable debug code, in general these are debug messages"
+"debug_lexer", DEBUG_OPTION_REF(debug_lexer), "Enables lexer debug"
+"debug_parser", DEBUG_OPTION_REF(debug_parser), "Enables parser debug"
+"print_ast", DEBUG_OPTION_REF(print_ast), "Prints ast in graphviz format"
+%%
+
+static int cmpstringp(const void *p1, const void *p2)
+{
+    struct debug_flags_list_t** df1 = (struct debug_flags_list_t**) p1;
+    struct debug_flags_list_t** df2 = (struct debug_flags_list_t**) p2;
+
+    return strcmp((*df1)->name, (*df2)->name);
+}
+
+
+
+struct debug_flags_list_t** list_of_debug_flags(void)
+{
+    struct debug_flags_list_t** result = NULL;
+
+    int i = 0;
+    int j = 0;
+    while (i < TOTAL_KEYWORDS)
+    {
+        char* keyword = debugflags_list[j].name;
+
+        if (keyword != NULL && *keyword != '\0')
+        {
+            P_LIST_ADD(result, i, &(debugflags_list[j]));
+        }
+
+        j++;
+    }
+
+    P_LIST_ADD(result, i, NULL);
+
+    qsort(result, i-1, sizeof(struct debug_flags_list_t *), cmpstringp);
+
+    return result;
+}

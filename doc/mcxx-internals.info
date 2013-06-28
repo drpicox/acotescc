@@ -1,0 +1,4263 @@
+This is mcxx-internals.info, produced by makeinfo version 4.8 from
+mcxx-internals.texi.
+
+   mcxx Internals Manual. Version 1.0
+
+   Copying and distribution of this file, with or without modification,
+are permitted in any medium without royalty provided the copyright
+notice and this notice are preserved.
+
+   Copyright (C) 2008 Roger Ferrer Iba'n~ez.
+
+
+File: mcxx-internals.info,  Node: Top,  Next: Introduction,  Up: (dir)
+
+mcxx Internals Documentation Reference
+**************************************
+
+mcxx Internals Manual. Version 1.0
+
+   Copying and distribution of this file, with or without modification,
+are permitted in any medium without royalty provided the copyright
+notice and this notice are preserved.
+
+   Copyright (C) 2008 Roger Ferrer Iba'n~ez.
+
+* Menu:
+
+* Introduction::
+* Compilation process::
+* Abstract Syntax Tree::
+* Type system::
+* Symbols::
+* Scopes and contexts::
+* Extensible structures and schemas::
+* Introduction to TL::
+* Examples of TL::
+* Installation of mcxx::
+* Function Index::
+* Type Index::
+* Concept Index::
+
+
+File: mcxx-internals.info,  Node: Introduction,  Next: Compilation process,  Prev: Top,  Up: Top
+
+1 Introduction
+**************
+
+* Menu:
+
+* What is this document about::
+* What is mcxx?::
+* Structure of this document::
+
+
+File: mcxx-internals.info,  Node: What is this document about,  Next: What is mcxx?,  Up: Introduction
+
+1.1 What is this document about
+===============================
+
+This is the mcxx (Mercurium C++ compiler) internals reference document.
+This document intends to give the reader a detailed explanation of the
+compiler, how it works and how it can be extended.  The idea is not to
+give a course of compilers but allow any user with enough compilation
+process knowledge to modify the compiler.
+
+   This is not a document to learn C or C++ and even in some places it
+requires good knowledge of these.
+
+
+File: mcxx-internals.info,  Node: What is mcxx?,  Next: Structure of this document,  Prev: What is this document about,  Up: Introduction
+
+1.2 What is mcxx?
+=================
+
+mcxx is a C/C++ research compiler targeted at source-to-source
+processing. The word research here means that it is not intended to be
+a commercial high-quality compiler (even if the developers and their
+responsibles would like it to be) and thus it may crash, eat your
+homework or wipe your hard disk. Normally, though, this is unlikely to
+happen and we strive for to make this close to impossible. But you were
+warned.
+
+   This compiler was developed to fill some needs when dealing with
+C++. There are not very much C++ compilers open source and none of
+them(1) was useful for source-to-source processing.  Commercial, or non
+source-to-source ones, compilers tend to lower as early as possible to
+intermediate representations that loose track of almost all the source
+so they are not very well suited for this kind of processing. C is
+supported as it is almost a subset of C++ and because many things are
+easier to do in C than in C++ when concerning to symbolic issues.
+
+   The compiler started initially in the context of OpenMP research so
+some parts of it are really well suited for it. On the other hand, the
+compiler itself is rather generic and has been used in some contexts
+not strictly related to OpenMP.
+
+   ---------- Footnotes ----------
+
+   (1) At the time of writing this document
+
+
+File: mcxx-internals.info,  Node: Structure of this document,  Prev: What is mcxx?,  Up: Introduction
+
+1.3 Structure of this document
+==============================
+
+This document describes several aspects of the compile. The first part
+describes the core of the representation.
+
+   * *Note Compilation process:: outlines the whole process performed by
+     the compiler. This chapter is a must read to understand how the
+     compiler is actually laid out.
+
+   * *Note Abstract Syntax Tree:: introduces the structure used by the
+     compiler to represent parsed source code.
+
+   * *Note Type system:: explains with detail the type system used in
+     the compiler.  Although this information can be always obtained
+     from the tree, having it in a synthesized form eases using it.
+
+   * *Note Symbols:: explains the internal representation of the
+     compiler for symbols and other named entities declared in the
+     source code.
+
+   * *Note Scopes and contexts:: details the information that
+     represents scopes and contexts, entities that represent where a
+     given name is valid and give its meaning.
+
+   * *Note Extensible structures and schemas:: detail a feature of some
+     structures in the compiler to allow storing additional information
+     not considered originally by the compiler.
+
+   The second part concerns TL, the part intended to be extended more
+frequently.
+
+   * *Note Introduction to TL::.
+
+
+File: mcxx-internals.info,  Node: Compilation process,  Next: Abstract Syntax Tree,  Prev: Introduction,  Up: Top
+
+2 Compilation process
+*********************
+
+* Menu:
+
+* Compilation flow overview::
+* Driver::
+
+   In this chapter a global vision of the compilation process and an
+explanation about layout of the files and directories is given.
+
+
+File: mcxx-internals.info,  Node: Compilation flow overview,  Next: Driver,  Up: Compilation process
+
+2.1 Compilation flow overview
+=============================
+
+* Menu:
+
+* Preprocessing::
+* Context free parsing::
+* Semantic analysis::
+* Compilation pipeline::
+* Prettyprinting::
+* Additional steps::
+
+   The compiler flow can be sketched as follows.
+
+  1. First the source code is preprocessed.
+
+  2. The preprocessed source is parsed.
+
+  3. The ambiguous tree is then analyzed semantically.
+
+  4. The pipeline of compilation phases is launched.
+
+  5. The modified abstract syntax tree is prettyprinted into a file.
+
+  6. Additional steps depending on the exact arguments passed.
+
+
+File: mcxx-internals.info,  Node: Preprocessing,  Next: Context free parsing,  Up: Compilation flow overview
+
+2.1.1 Preprocessing
+-------------------
+
+In this phase the input source files are preprocessed using the
+configured preprocessor. Normally `gcc -E' or `cpp' is used.
+
+   This step is mandatory since non preprocessed input files can form
+incomplete or even invalid source files. The compiler recognizes
+location marks left by the GNU-style preprocessor. This information can
+be used further by the compiler to know which file the code came from.
+
+   The compiler also recognizes `#pragma' lines. Note that pragmas are
+generally not macro expanded from the preprocessor. This is not a
+limitation of mcxx but the way the whole compilation system works.
+
+
+File: mcxx-internals.info,  Node: Context free parsing,  Next: Semantic analysis,  Prev: Preprocessing,  Up: Compilation flow overview
+
+2.1.2 Context free parsing
+--------------------------
+
+Once the code has been preprocessed it is parsed. In this step a GLR
+parser(1) is used.  This parser is built after a somewhat modified
+standard grammar(2) and it accepts C99(3) and C++(4) syntactically
+valid applications.
+
+   The parser tries to support several syntactic GNU extensions(5),
+mainly the `__attribute__' notation but also some other GNU idioms.
+Support for this non-standard extensions normally does not go beyond
+the parser unless needed for some later process. Do not expect the
+compiler to do anything clever with these extensions.
+
+   This phase constructs the AST (Abstract Syntax Tree) that will be
+used in all the later processes. This step does a completely
+_context-free_ parsing, so the tree generated here is ambiguous. Being
+ambiguous has several drawbacks, mainly the tree is completely useless.
+It has some benefits too, allows to realize how deep some ambiguities
+in C++ (and C, but less) are. These ambiguities have to be fixed, but
+fixing them requires contextual knowledge.
+
+   Main files involved in this step are `src/frontend/cxx-lexer.l',
+`src/frontend/c99.y.in', `src/frontend/cxx03.y.in',
+`src/frontend/cxx-construct.y', `src/frontend/cxx-omp.y' and
+`src/frontend/cxx-pragma.y'.
+
+   ---------- Footnotes ----------
+
+   (1) Currently this parser requires a somewhat special version of
+`bison-2.3' with support for `default-merge' directive. This directive
+is just a productivity option to save some writing in the grammar but
+it does not add any other functionality not existing in `bison-2.3'.
+
+   (2) For efficiency reasons following strictly the C/C++ standard
+grammar is not feasible, in particular for C++. However, the grammar is
+designed to be equivalent to the standard one.
+
+   (3) ISO/IEC 9899:1999
+
+   (4) ISO/IEC 14882:2003
+
+   (5) mcxx tries hard to accept anything accepted by GCC 4.1
+
+
+File: mcxx-internals.info,  Node: Semantic analysis,  Next: Compilation pipeline,  Prev: Context free parsing,  Up: Compilation flow overview
+
+2.1.3 Semantic analysis
+-----------------------
+
+In order to fix the AST generated in the previous phase, we need to
+gather symbolic information that will allow us to realize the exact
+meaning of the code.
+
+   Doing this process in two steps, first building the tree in the
+parsing phase and then pruning it, allows easier maintenance of the
+grammar (always a tough part of any generated parser) and simplifies
+the semantic part (as one has to deal with syntactic elements always of
+the same shape). Doing both things at the same time is possible but is
+much more complex, on the other hand it saves memory (now we are
+wasting memory for all the potential interpretation of ambiguous parts
+of the code).
+
+   This process builds the scope (symbol tables) information needed for
+disambiguation.  The main files involved in this phase are
+`src/frontend/cxx-buildscope.c' and `src/frontend/cxx-ambiguity.c'.
+
+
+File: mcxx-internals.info,  Node: Compilation pipeline,  Next: Prettyprinting,  Prev: Semantic analysis,  Up: Compilation flow overview
+
+2.1.4 Compilation pipeline
+--------------------------
+
+Once the tree has been fixed and symbolic information gathered from the
+source the compilation pipeline is started.
+
+   This compilation pipeline is a set of dynamic libraries loaded by
+the compiler.  The compiler runs every phase sequentially, this phases
+can do anything to the code. Normally they modify the AST in order to
+make changes to the current code. These phases, as you will have
+guessed, are customizable to fit everyone's need. They are written in
+C++ and the compiler provides some sort of SDK to do it.
+
+   These phases can be used in a sequential fashion, as the data they
+can compute can be passed to the next phases. This allows to have
+separate phases working on an additional intermediate information,
+besides the AST and the symbolic information.
+
+
+File: mcxx-internals.info,  Node: Prettyprinting,  Next: Additional steps,  Prev: Compilation pipeline,  Up: Compilation flow overview
+
+2.1.5 Prettyprinting
+--------------------
+
+The last step done by the compiler is called prettyprinting. The
+resulting AST after the compilation pipeline phase it is prettyprinted
+into an output file, or the standard output.
+
+
+File: mcxx-internals.info,  Node: Additional steps,  Prev: Prettyprinting,  Up: Compilation flow overview
+
+2.1.6 Additional steps
+----------------------
+
+mcxx provides a full fledged driver that is able to invoke the native
+compiler and the linker if needed. This allows for easier usage in
+makefiles.
+
+
+File: mcxx-internals.info,  Node: Driver,  Prev: Compilation flow overview,  Up: Compilation process
+
+2.2 Driver
+==========
+
+The driver code is located exclusively in the files
+`src/driver/cxx-driver.c', `src/driver/cxx-driver-decls.h' and
+`src/driver/cxx-driver.h'. It is a command-line application that
+handles all the compilation flow described in *Note Compilation flow
+overview::.
+
+* Menu:
+
+* Configuration::
+* Extension handling::
+* Multifile processing::
+
+
+File: mcxx-internals.info,  Node: Configuration,  Next: Extension handling,  Up: Driver
+
+2.2.1 Configuration
+-------------------
+
+mcxx is a `configurable' compiler this means that its behaviour can be
+modified by several means, the main being the configuration file.
+
+   By default, the configuration file is in `_pkgdatadir_/config.mcxx'.
+Directory `_pkgdatadir_' is defined at `configure' time and by default
+it is `/usr/local/mcxx/share'.
+
+   This file allows defining several profiles. The profile modifies the
+compiler behaviour. The exact profile used when running the compiler
+can be chosen implicitly, using the basename of the invocation of the
+compiler (this is, how it has been named to invoke it) or using
+`--profile=_name_'. The following is an example of configuration file.
+
+     # For C
+     [mcc]
+     language = C
+     options =
+     preprocessor_name = gcc
+     preprocessor_options = -E
+     compiler_name = gcc
+     compiler_options =
+     linker_name = gcc
+     linker_options =
+     compiler_phase = libtlinstr.so
+     compiler_phase = libtlomp.so
+
+     # For C++
+     [mcxx]
+     language = C++
+     options =
+     preprocessor_name = g++
+     preprocessor_options = -E
+     compiler_name = g++
+     compiler_options =
+     linker_name = g++
+     linker_options =
+     compiler_phase = libtlinstr.so
+     compiler_phase = libtlomp.so
+
+   If you want to extend this part with newer configuration lines you
+will have to change file `driver/cxx-configfile.c' and
+`driver/cxx-configoptions.gperf'.
+
+
+File: mcxx-internals.info,  Node: Extension handling,  Next: Multifile processing,  Prev: Configuration,  Up: Driver
+
+2.2.2 Extension handling
+------------------------
+
+mcxx tries to make sensible choices when concerning extension types.
+For instance `.c' files are assumed to be C while `.C', `.cc' and
+`.cpp' are assumed to be C++. Headers are not eligible for passing to
+the compiler, so no support is given for them although some compilers
+allow such case when dealing precompiled headers.
+
+   This configuration can be changed to fit better your needs. The main
+file involving extension handling is `driver/cxx-fileextensions.gperf'.
+
+
+File: mcxx-internals.info,  Node: Multifile processing,  Prev: Extension handling,  Up: Driver
+
+2.2.3 Multifile processing
+--------------------------
+
+mcxx allows that its compiler phases queue newer files to be processed
+as a result of the compilation process.  For instance, we could have a
+file `a.c' from which we synthesize two newer files `a_1.c' and `a_2.c'.
+These two files will be processed as soon as the compiler phase
+pipeline of `a.c' ends. A file is only considered once for compilation.
+
+* Menu:
+
+* Type system::
+
+
+File: mcxx-internals.info,  Node: Abstract Syntax Tree,  Next: Type system,  Prev: Compilation process,  Up: Top
+
+3 Abstract Syntax Tree
+**********************
+
+* Menu:
+
+* Tree definition::
+* Tree types::
+* Ambiguity trees::
+* List trees::
+
+   Abstract Syntax Tree, from now AST, is the synthesized
+representation of the source code. In contrast to many other compilers,
+mcxx's AST will try to capture many syntactic details (normally
+unneeded or actually lowered).  This adds complexity to the compiler
+but makes happier users, specially when they have to check the output
+code. Trying to realize what is wrong when some information has just
+disappeared tends to upset the debugging user.
+
+   AST is just a double linked 4-ary tree. While normally four children
+are enough for most situations, sometimes a fifth or sixth is needed.
+Instead of considering such cases, do not surprise if you see the
+compiler creating some sort of _wrap_ trees that just hold two more
+trees or, in particular for some GCC extensions, they hold the
+extension bit and then the normal syntax.
+
+
+File: mcxx-internals.info,  Node: Tree definition,  Next: Tree types,  Up: Abstract Syntax Tree
+
+3.1 Tree definition
+===================
+
+`AST' type is defined as an opaque type to `struct AST_tag'. It is
+declared in `frontend/cxx-ast-decls.h'. The actual implementation is
+found in `frontend/cxx-ast.c'. It is defined as follows.
+
+     struct AST_tag
+     {
+         node_t node_type;
+
+         int num_children;
+
+         struct AST_tag* parent;
+
+         struct AST_tag* children[4];
+
+         int line;
+         const char* filename;
+
+         const char* text;
+
+         int num_ambig;
+         struct AST_tag** ambig;
+
+         struct type_tag* expr_type;
+         char expr_is_lvalue;
+
+         extensible_struct_t* extended_data;
+     };
+   
+`node_type'
+     This is the tree type, it is an integer that identifies the entity
+     being represented with this tree.  See *Note Tree types:: for more
+     information about the valid values.
+
+`num_children'
+     States the intended number of children. This does not mean that
+     the tree should have those children but in the worst of the cases
+     at least those can be held by the tree. This value is set by the
+     `ASTMake' macros.
+
+`parent'
+     The parent children, except for the top level trees (like those
+     created by subparsing)
+
+`children'
+     The array holding, at much, four references to other trees.
+
+`line'
+`filename'
+     These two fields identify the tree. `filename' is the name of the
+     file where this tree was parsed and `line' the number within it.
+     Note that due to preprocessing reasons, `filename' changes among
+     trees.
+
+`text'
+     This field stores textual information related to the lexed token.
+     Many of the times this field is null and it is used only for
+     symbolic names (like variables) in the code.
+
+`num_ambig'
+`ambig'
+     These two fields are only meaningful when `node_type' is
+     `AST_AMBIGUITY' (*note Ambiguity trees::). The former states how
+     many ambiguities are collapsed in this tree (most of the time this
+     is only two, but sometimes there might be more).  `ambig' is an
+     array of trees representing all the possible interpretations.
+     Parser warrantees that ambiguities do not appear directly nested
+     into a given ambiguity, thus none of the trees referenced in
+     `ambig' array are of kind `AST_AMBIGUITY'
+
+`expr_type'
+     This field stores a pointer to a type representing the type of the
+     expression. This field can be null for those trees that are not
+     part of an expression or, if they are, do not have a valid
+     computed type (maybe due to failing typechecking).
+
+`expr_is_lvalue'
+     When field `expr_type' is not null, this field can represent
+     whether the expression itself is an lvalue or not. In C++ this is
+     most of the time equivalent to have a reference type in
+     `expr_type'. In C this field is mandatory since no referenced
+     types exist.
+
+`extended_data'
+     This field stores the extensible struct. *Note Extensible
+     structure::.
+
+
+File: mcxx-internals.info,  Node: Tree types,  Next: Ambiguity trees,  Prev: Tree definition,  Up: Abstract Syntax Tree
+
+3.2 Tree types
+==============
+
+The tree type is just an integer, represented symbolically by an
+enumerator. The enum type is created after the contents of file
+`frontend/cxx-asttype.def'. This file contains one tree type name per
+line and it is used to generate `cxx-asttype.c' at build time.
+
+   Two special values exist for tree type id. `AST_INVALID_NODE'
+represents a tree with a type id zero and represents an internally ill
+formed tree (the compiler is not supposed to create any of these).
+`AST_LAST_NODE' is the highest type id available and all valid trees
+should have a value between `AST_INVALID_NODE' and `AST_LAST_NODE'. The
+compiler does not use `AST_LAST_NODE' for any other purpose.
+
+   Other special values are `AST_AMBIGUITY' described in *Note
+Ambiguity trees:: and `AST_NODE_LIST' described in *Note List trees::.
+
+
+File: mcxx-internals.info,  Node: Ambiguity trees,  Next: List trees,  Prev: Tree types,  Up: Abstract Syntax Tree
+
+3.3 Ambiguity trees
+===================
+
+As stated in *Note Context free parsing:: the tree as parsed directly
+by the GLR parser contains ambiguities. In C the only arising ambiguity
+is
+
+     void f()
+     {
+         T(a);
+     }
+
+   Statement `T(a)' has different interpretation depending on the exact
+meaning of `T'. If `T' is a type name then the above statement is
+equivalent to `T a;', if `T' is not a type name (and provided `a'
+itself is a valid expression) then it is a call to a function named `T'.
+
+   C++ raises the bar compared to C. The statement above has a third
+interpretation (though only within the context of an expression, so no
+expression vs. declaration happens but expression vs. expression) if `T'
+is a class name. In this later case it could be an _explicit type cast_.
+
+   Other ambiguities in C++ are caused by the unfortunate use of `<'
+when naming templates. A code like
+
+     void f()
+     {
+       C<A> B;
+     }
+
+   can be parsed in several ways depending on whether `C', `A' and `B'
+are or not type names. For instance, a feasible interpretation is
+equivalent to the following expression `C<(A>B)'.  Additional
+ambiguities are introduced by the fact that a name can either be a type
+name or an object name so
+
+     void f()
+     {
+       C<a> b;
+     }
+
+   will require knowing whether `a' is a type name, template name or
+object name (identifier) for a proper parse.
+
+   Other ambiguities are either introduced by the standard grammar (and
+kept because it turns out to be easier to handle them later than to
+obfuscate the grammar itself) or by intentional modifications to the
+grammar in order to bound the ambiguity _explosion_.
+
+     void f()
+     {
+       A::B::D d;
+     }
+
+   If we used literally the grammar, without no restrictions in
+declarations, previous declaration could have more than eight
+interpretations (one for each of the ways to group `A', `B', `D', `d').
+mcxx grammar forces declarations to have at most one type specifier (or
+none for constructors, destructors and conversion functions that do not
+have a type specifier in their declarations). So the above declaration
+can only be understood as a type specifier `A::B::D' and a declarator
+`d'. This solution works fine most of the time but introduces some
+spurious ambiguities because some keywords are either declarator
+specifiers or type specifiers.
+
+     unsigned long a;
+
+   In the declaration above either `unsigned' or `long' can be the type
+specifier (actually this declaration implies an `int'). So two
+interpretations are given for this declaration one where `unsigned' is
+the type specifier and one where `long' is the type specifier. Choosing
+one or the other is non relevant since both constructions would lead to
+the same synthesized type.
+
+   The parser is rather lax when allowing things, it is not designed to
+be foolproof so things like these can be accepted by the compiler even
+if they are blatantly invalid in C and C++.
+
+     void f(struct A { int c; } b)
+     {
+     }
+
+   Except for the ambiguity of the `unsigned long a' shown above (this
+one shows a syntactic quirk more than a context sensitive source) most
+ambiguities require contextual information. Even more, some require
+complex analysis, like this one requiring the possibility of
+instantiating a given template.
+
+     int a; // This is '::a'
+
+     template <typename _T>
+     struct A
+     {
+       typedef _T *T;
+     };
+
+     template <typename _T>
+     struct A<_T*>
+     {
+       static void T(int n);
+     };
+
+     void g()
+     {
+       A<int*>::T(a); // Calls 'A<int*>::T(int)' using '::a'
+       A<float>::T(a); // Equivalent to 'float *a;'
+     }
+
+   We could ignore such complex cases but this would render the C++
+compiler of little utility since it would not be able to tell apart a
+declaration from a plain expression in some cases. An important part of
+the machinery of C++ compiler is just there to implement proper
+parsing, in fact, to be able to distinguish such ambiguous cases.
+
+
+File: mcxx-internals.info,  Node: List trees,  Prev: Ambiguity trees,  Up: Abstract Syntax Tree
+
+3.4 List trees
+==============
+
+Besides a hierarchic syntactic structure, languages also feature a
+sequential nature (for instance the list of parameters in a function
+declaration, a list of arguments in a function call, a list of
+sentences in a function body, etc). These sequences (or lists with
+interspersing characters like commas or semicolons) must be somehow
+represented in the tree. Because of the nature of the parser, a LR one,
+the natural way of storing these lists is in reverse order.
+
+   The special node containing a list (or sequence) of things is
+`AST_NODE_LIST'. Although this is not always held by the compiler, every
+list or sequential alike thing should be wrapped within nodes of
+`AST_NODE_LIST'.
+
+   These lists are stored in reverse order, so `ASTSon1' will give the
+last element of the current sublist and `ASTSon0' the remaining heading
+list. A list with only one element will have a null `ASTSon0'.  There
+is no empty list, so the tree referring a list will have it as a null
+tree.
+
+   Some algorithms do not mind being applied in reversed lists but most
+of the time we want them to be applied in forward order. This helps
+debugging since will process trees in the source code order. Compiler
+traverses lists using macro `for_each_element(list, iterator)'. This
+macro receives two trees: a non null list and an iterator variable. The
+iterator is actually a list, so we need to explicitly get the current
+element of the list.
+
+     for_each_element(list, iter)
+     {
+        AST current_element = ASTSon1(iter);
+     }
+
+   Not allowing empty lists forces to do a check just before traversing
+the list, so making more explicit what to do when no elements are in a
+list.
+
+
+File: mcxx-internals.info,  Node: Type system,  Next: Symbols,  Prev: Abstract Syntax Tree,  Up: Top
+
+4 Type system
+*************
+
+* Menu:
+
+* Type type::
+* Type definition::
+* Qualification::
+* Direct types::
+* Pointer types::
+* Array types::
+* Function types::
+* Vector types::
+* Unresolved function reference types::
+* Ellipsis type::
+
+   The second most important thing handled by the compiler, beside the
+source code, are types. The type system is a world of _things_ that
+describe which values can be taken by variables in the program. These
+things are the types.
+
+   Types in C/C++ have a tree-alike structure because the can be built
+on top of other types. Some can be rather simple like a pointer type
+but others can be as complex as a class can be, having member data
+types (either static or nonstatic), inheritance relationships with
+other classes, etc. Finally some types are actually constructors of
+other types (or represent an infinite set of types), these are template
+types. Every instance of a template type will be named here as a
+template specialized type.
+
+
+File: mcxx-internals.info,  Node: Type type,  Next: Type definition,  Up: Type system
+
+4.1 Type type
+=============
+
+The C type representing a C type is `type_t' and it is declared in
+`frontend/cxx-typeutils.h'. It is an opaque data type so only pointers
+to it can be used (except for the implementation file
+`frontend/cxx-typeutils.c' which can access the inner representation of
+a type).
+
+   Types in the type system are most of the time immutable. This means
+that once we are given a reference to a type it will not change. This
+paragraph reads _most of the time_ because there are some moments where
+a type has a transient nature before it is completely defined. This
+happens for class types since their members can be defined later. For
+instance,
+
+     struct A;
+     struct B
+     {
+       A *a;
+     };
+     struct A
+     {
+       B *b;
+     };
+
+   There is a moment where type of class `A' does not have any member
+(when it is referenced in `A* a;') and then later it is given a member
+`b' (with class type `B'). More precisely, for the class `B', the type
+is initially an empty class type and then it is filled with members
+incrementally. But this moments of mutability are just special cases
+for classes, normally types are of immutable nature.
+
+   Working with pointer to class types with (almost) immutable nature
+allows the compiler to try to share as most as possible data types. Not
+all data types can be effectively shared but most of them are. For
+instance, all references to an `int' type are the same, and so are all
+the references to `const int', `int*'.
+
+   Things that are cumbersome, or troublesome or unpractical, to be
+shared are array types (this is a rather unfortunate case because of
+variable length arrays where we will want to keep the original
+expression of the size) and function types.
+
+   Function types are not shared (even if they could) because of
+typedefs.  Typedefs are synonyms of types and they could be therefore
+flattened, but not flattening them makes users happier because it
+avoids converting `std::string' into the dreaded
+`std::basic_string<char, std::char_traits<char>, std::allocator<char>
+>', which, is, admittedly, rather harsh to read when debugging output
+code.
+
+   So, although these three functions below have the same underlying
+function type, none of them will share a common type. This does not
+pose any functional limitation to the compiler, it will just waste more
+memory.
+
+     void f1(int, float);
+     void f2(int, float);
+
+     typedef int T;
+     typedef float Q;
+
+     void f3(T, Q);
+
+   (This limitation could be removed in the future since we could share
+things based on the actual pointer of the type and not whether it is
+the same type)
+
+   Types can be one of the following:
+
+   * Direct types. These can represent lots of different types. *Note
+     Direct types::.
+
+   * Pointer types. *Note Pointer types::.
+
+   * Pointer to member types. *Note Pointer types::.
+
+   * Reference types. *Note Pointer types::.
+
+   * Array types. *Note Array types::.
+
+   * Function types. *Note Function types::.
+
+   * Vector type. *Note Vector types::.
+
+   * Unresolved function reference type. *Note Unresolved function
+     reference types::.
+
+   * Ellipsis type. *Note Ellipsis type::.
+
+
+File: mcxx-internals.info,  Node: Type definition,  Next: Qualification,  Prev: Type type,  Up: Type system
+
+4.2 Type definition
+===================
+
+Type `type_t' is defined in `frontend/cxx-typeutils.c'.
+
+     struct type_tag
+     {
+         enum type_kind kind;
+
+         pointer_info_t* pointer;
+
+         array_info_t* array;
+
+         function_info_t* function;
+
+         simple_type_t* type;
+
+         scope_entry_list_t* overload_set;
+         template_argument_list_t* explicit_template_argument_list;
+
+         vector_info_t* vector;
+
+         cv_qualifier_t cv_qualifier;
+
+         struct type_tag* unqualified_type;
+
+         struct type_tag* original_type;
+
+         char is_template_specialized_type;
+         template_argument_list_t* template_arguments;
+         struct type_tag* related_template_type;
+         template_parameter_list_t* template_parameters;
+
+         _size_t size;
+     };
+   
+   Its fields are documented below.
+
+`kind'
+     Is the kind of the type. Below are the values it can have
+    `TK_DIRECT'
+          Direct types.
+
+    `TK_POINTER'
+          Pointer types.
+
+    `TK_REFERENCE'
+          Reference types.
+
+    `TK_POINTER_TO_MEMBER'
+          Pointer to member types.
+
+    `TK_ARRAY'
+          Array types.
+
+    `TK_FUNCTION'
+          Function types.
+
+    `TK_OVERLOAD'
+          Unresolved function reference.
+
+    `TK_VECTOR'
+          Vector types.
+
+    `TK_ELLIPSIS'
+          Ellipsis type (...)
+
+`pointer'
+     A field to a `pointer_info_t', described in *Note Pointer types::.
+     This field is non-null only when kind is `TK_POINTER',
+     `TK_POINTER_TO_MEMBER' or `TK_REFERENCE'.
+
+`array'
+     A field to a `array_info_t', described in *Note Array types::.
+     This field is non-null only when kind is `TK_ARRAY'.
+
+`type'
+     A field to a `simple_type_t', described in *Note Direct types::.
+     This field is non-null only when kind is `TK_DIRECT'.
+
+`overload_set'
+`explicit_template_argument_list'
+     Field `overload_set' contains a set of symbols (*note Symbols::)
+     representing all potentially eligible symbols for this function
+     reference, as in
+
+          void f(int);
+          void f(float);
+          void f(char);
+
+          void h(void*);
+
+          void g()
+          {
+             // 'f(int)' is chosen among all given 'f'
+             h((void (*)(int))f);
+          }
+
+     Some overloaded references require knowing the actual template
+     argument list (*note Template arguments::) like in the example
+     below. This is stored in `explicit_template_argument_list' field.
+
+          template <typename _Q>
+          void f(_Q);
+
+          void h(void*);
+
+          template <typename _T>
+          void g()
+          {
+             h(f<_T*>);
+          }
+
+`vector'
+     This field is only non-null when `kind' is `TK_VECTOR'. It points
+     to a `vector_info_t' structure defined in *Note Vector types::.
+
+`cv_qualifier'
+     This holds a value of the cv-qualifier. *Note Qualification::.
+
+`unqualified_type'
+     This is a pointer to the unqualified type of the current type. If
+     the type is already unqualified it points to itself. *Note
+     Qualification::.
+
+`original_type'
+     If the type has been adjusted because it is the type of a function
+     parameter, this type holds the non adjusted type.  Otherwise it
+     will be null.
+
+          void f(int a[5]);
+
+     Type of parameter `a' will be `int*' but its original type will be
+     `int[5]'.
+
+`is_template_specialized_type'
+`template_arguments'
+`related_template_type'
+     *Note Templates::. These store information for specialized
+     template types. This is, types that are specialization of a given
+     template, either class or function.
+
+`template_parameters'
+     These store template parameters and are only used for templated
+     types. *Note Templates::.
+
+`size'
+     This field should contain the size in bytes of the underlying
+     type. This is a experimental feature and it is not expected to
+     work nor to be useful.
+
+
+
+File: mcxx-internals.info,  Node: Qualification,  Next: Direct types,  Prev: Type definition,  Up: Type system
+
+4.3 Qualification
+=================
+
+C and C++ allow a type to be qualified. This means that a given type `T'
+can be qualified with any of  `const', `volatile' or `restrict'.
+
+   To implement efficiently these types, the compiler has several sets
+indexed by the pointer of the unqualified type corresponding to every
+possible combination of the qualifiers. This is, seven sets (the
+missing one is the case of the unqualified version) where the identical
+type is stored and only differs in the qualification.
+
+   This allows sharing types while also allows to query to the type
+system for a reference of a qualified type given any type efficiently.
+
+   The type representing the cv-qualification of a type is
+`cv_qualifier_t' and is a bitmap holding three bits: `CV_CONST',
+`CV_VOLATILE' and `CV_RESTRICT'. For convenience, `CV_NONE' is also
+provided.
+
+   Bitmap arithmetic can be performed on this values and several
+functions can be used to determine whether a type is less qualified
+than another.
+
+   Every type can be qualified. Function types can be qualified when
+they are the type of a nonstatic member function. References should not
+be qualified.  Arrays types can be qualified as of C99. Unresolved
+function references are never qualified.
+
+
+File: mcxx-internals.info,  Node: Direct types,  Next: Pointer types,  Prev: Qualification,  Up: Type system
+
+4.4 Direct types
+================
+
+* Menu:
+
+* Enum types::
+* Class types::
+* Dependent typenames::
+
+   Direct types represent the set of types that cannot be represented,
+or we do not want to represent, using other types. This mainly includes
+builtin types, those provided by C and C++ but some other types that
+are actually built on top of others but is more convenient to represent
+them as a single entity, like class types.
+
+   The data type holding a direct type is `simple_type_t' defined in
+`frontend/cxx-typeutils.c'.  It is defined as follows.
+
+     typedef
+     struct simple_type_tag {
+         simple_type_kind_t kind;
+
+         builtin_type_t builtin_type;
+
+         char is_long;
+         char is_short;
+         char is_unsigned;
+         char is_signed;
+
+         char is_complex;
+
+         struct scope_entry_tag* user_defined_type;
+
+         struct type_tag* aliased_type;
+
+         enum_info_t* enum_info;
+
+         class_info_t* class_info;
+
+         AST template_class_base_clause;
+         AST template_class_body;
+
+         decl_context_t type_decl_context;
+
+         AST typeof_expr;
+         decl_context_t typeof_decl_context;
+         char typeof_is_expr;
+
+         template_nature_t template_nature;
+
+         template_parameter_list_t* template_parameter_list;
+         type_t* primary_specialization;
+         scope_entry_t* related_template_symbol;
+
+         int num_specialized_types;
+         type_t** specialized_types;
+
+         scope_entry_t* dependent_entry;
+         AST dependent_nested_name;
+         AST dependent_unqualifed_part;
+     } simple_type_t;
+   
+`kind'
+     This contains the kind of this simple type. Do not confuse with
+     the type of `type_t' shown above.  Possible values for this field
+     are
+
+    `STK_BUILTIN_TYPE'
+          This represents a builtin type like `int', `float', `double',
+          etc.
+
+    `STK_CLASS'
+          This is a class type. Both named and unnamed classes (structs
+          or unions too) are represented with a type of kind
+          `STK_CLASS'.
+
+    `STK_ENUM'
+          This is an enum type. Both named and unnamed enums have an
+          underlying `STK_ENUM' direct type.
+
+    `STK_TYPEDEF'
+          This is a typedef, so a synonym for an existing type.
+
+               typedef int T;
+
+          Will create a symbol `T' with type `TK_DIRECT' of kind
+          `STK_TYPEDEF'.
+
+    `STK_USER_DEFINED'
+          This is a named type. Every type that is defined after a
+          symbol it is a `STK_USER_DEFINED'.  For instance
+
+               struct A { };
+               A a;
+
+          Variable `a' will have as type a `TK_DIRECT' of kind
+          `STK_USER_DEFINED'. This named type will refer to `A' symbol,
+          a class name, which will have a type `TK_DIRECT' of kind
+          `STK_CLASS'.
+
+          On the other hand
+
+               struct { } b;
+
+          Variable `b' will have as type a `TK_DIRECT' of kind
+          `STK_CLASS', without any intermediate name. Typedefs can be
+          used to name things both in C and C++. For instance
+
+               typedef struct { } C;
+               C c;
+
+          Variable `c' will have as type a `TK_DIRECT' of kind
+          `STK_USER_DEFINED' referring to a `C' that it is actually a
+          typedef name aliasing a `TK_DIRECT' of kind `STK_CLASS'.
+
+    `STK_TEMPLATE_TYPE'
+          This is a template type. This type exists to hold in only one
+          place all possible specializations related to a type.  For
+          instance
+
+               template <typename _T>
+               struct A { };
+
+          will create a symbol `A' with type `TK_DIRECT' of kind
+          `STK_TEMPLATE_TYPE'. In addition the compiler will link it
+          with its _primary template type_ that will be a type
+          `TK_DIRECT' of kind `STK_CLASS' and will represent the
+          primary template. When, some lines below the compiler finds
+
+               template <typename _T>
+               struct A<_T*> { };
+
+          It will link to the `STK_TEMPLATE_TYPE' a specialization,
+          again with kind `STK_CLASS'.
+
+    `STK_TEMPLATE_DEPENDENT_TYPE'
+          This is a template dependent type. This is a type that cannot
+          be truly known at compile time and must be delayed till
+          instantiation. Nevertheless, we have to be able to compare
+          them so a value for this type is created.
+
+          In the following example, when checking the second function
+          declaration of `f<_Q>' we need to know that the previous
+          declaration of `f<_T>' is not an overload.
+
+               template <typename _T>
+               void f(typename _T::K);
+
+               template <typename _Q>
+               void f(typename _Q::K);
+
+    `STK_VA_LIST'
+          This represents the type of GCC `__builtin_va_list'.
+
+    `STK_TYPEOF'
+          This is the type built after the GCC `__typeof__' extension.
+          Currently this type is never generated since it is lowered to
+          the type of the expression referenced in the `typeof'.  Since
+          it was in previous versions of the compilers, it is likely
+          that some parts of the code still add support for typeof.
+
+`builtin_type'
+     If field `kind' is `STK_BUILTIN_TYPE' then this field will contain
+     the exact builtin named by this type. Values that this field can
+     take are the following
+
+    `BT_INT'
+          Something that it is an `int'. All sorts of `int' will have
+          this value set, including (but not limiting to) `short int',
+          `long int', `unsigned int', etc.
+
+    `BT_BOOL'
+          A C++ `bool' or C99 `_Bool'.
+
+    `BT_FLOAT'
+          A `float'.
+
+    `BT_DOUBLE'
+          A `double' or C99 `long double'.
+
+    `BT_CHAR'
+          A `char' including `signed char' and `unsigned char'.
+
+    `BT_WCHAR'
+          C++ `wchar_t'.
+
+    `BT_VOID'
+          A `void' type.
+
+`is_long'
+     Holds whether the type has been qualified with `long'. This only
+     applies for `int' and `double'.
+
+     When its value is `0' it means no `long' qualification. For both
+     `int' and `double' it can be `1', meaning, respectively, `long
+     int' and `long double'. In addition for `int', it can be `2'
+     meaning `long long int'.
+
+`is_short'
+     Holds whether the `int' is `short'.
+
+`is_unsigned'
+     Holds whether the `int' or `char' is `unsigned'.
+
+`is_signed'
+     Holds whether the `char' is `signed'. Note that this flag is also
+     set for `int', but the Standards dictate that `int' types are
+     always signed by default. This does not happen with `char'.
+
+`is_complex'
+     Holds whether the type is a C99 complex type like `_Complex float'
+     or `_Complex double'.
+
+`user_defined_type'
+     When `kind' is `STK_USER_DEFINED' this field contains the symbol
+     (*note Symbols::) that represents this type.
+
+          struct A { } a;
+
+     Type of `a' will be `TK_DIRECT' of kind `STK_USER_DEFINED' and
+     `user_defined_type' will reference the symbol `A'.
+
+`aliased_type'
+     When `kind' is `STK_TYPEDEF' this field contains the aliased type.
+
+          typedef int* p_int;
+
+     Symbol `p_int' will have as type a `TK_DIRECT' of kind
+     `STK_TYPEDEF' and `aliased_type' will reference a type
+     `TK_POINTER' of the `int' (*note Pointer types::).
+
+`enum_info'
+     When `kind' is `STK_ENUM' this points to the enum type information
+     structure. *Note Enum types::.
+
+`class_info'
+     When `kind' is `STK_CLASS' this points to the class type
+     information structure. *Note Class types::.
+
+`template_class_base_clause'
+`template_class_body'
+     When this class is the class type of a template class, this two
+     trees hold its body and the base clause for further instantiation.
+
+          template <typename _T>
+          struct A { };
+
+          template <typename _Q>
+          struct B : A<_Q>
+          {
+              _Q t;
+          };
+
+     The related class type of `B' (for its primary one, in particular)
+     we will save in `template_class_base_clause' the tree `A<_Q>' and
+     in `template_class_body' `_Q t;'.
+
+`type_decl_context'
+     When `kind' is `STK_CLASS' or `STK_ENUM' we save the context
+     (*note Scopes and contexts::) of the type. This is used in
+     argument dependent lookup (Koenig lookup), for instance.
+
+`typeof_expr'
+     This would store the expression tree of a `__typeof__'. Since
+     currently we are not generating any `STK_TYPEOF' type, this field
+     remains unused.
+
+`typeof_decl_context'
+     The context (*note Scopes and contexts::) of the typeof expression.
+
+`typeof_is_expr'
+     Holds whether the typeof is actually an expression or not because
+     GCC allows a typeof against an abstract declarator.
+          typedef int T;
+          __typeof__(T) t; // Like doing 'int t;'
+
+`template_nature'
+     Contains the template nature of the current template type. *Note
+     Template nature::.
+
+`template_parameter_list'
+     If this type kind is `STK_TEMPLATE_TYPE' then this field contains
+     its template parameters. *Note Template parameters::.
+
+`primary_specialization'
+     If this type kind is `STK_TEMPLATE_TYPE' then this field contains
+     the _primary specialization_.  For template classes this is the
+     primary template class, for function templates it means the
+     function template declarated itself.
+
+          template <typename _T> // (A-1)
+          struct A { };
+
+          template <typename _T> // (A-2)
+          struct A<_T*> { };
+
+          template <> // (A-3)
+          struct A<> { };
+
+     For the template class `A', its primary template will be the one
+     declared in `(A-1)'.
+
+          template <typename _T> // (f-a-1)
+          void f(_T t) { }
+
+          template <typename _T> // (f-b-1)
+          void f(_T* t) { }
+
+          // These are explicit instantiations
+          template void f<int>(int); // (f-a-2)
+          template void f<int>(int*); // (f-b-2)
+
+     In this example, there will be two `f' symbols of type
+     `STK_TEMPLATE_TYPE' with their primary specialization set to the
+     type of the declaration. Thus the first one, `f-a-1', will have as
+     primary specialization type `void (_T)' and the second one,
+     `f-b-1', `void (_T*)'.
+
+`related_template_symbol'
+     If this type kind is `STK_TEMPLATE_TYPE' then this field contains
+     the symbol that caused this type to exist. This is only needed to
+     implement the following case.
+
+          template <template <typename> class _V, typename _T> // (A-3)
+          struct A<_V<_T> > { };
+
+     During unification we need to know whether `_V<_T>' is a
+     `template-id' built after a template template parameter (like in
+     this case, symbol `_V') or not (like `A<int>', built after
+     template-class `A').
+
+`num_specialized_types'
+`specialized_types'
+     When `kind' is `STK_TEMPLATE_TYPE' this fields store the number of
+     specializations related to this template. For the example shown
+     above `A-2', and `A-3' will be linked as specializations of the
+     type of `A' (recall that its primary specialization is `A-1'). For
+     template functions `f-a-1' and `f-b-1', each one will have one
+     specialization `f-a-2' and `f-b-2', respectively.
+
+`dependent_entry'
+`dependent_nested_name'
+`dependent_unqualifed_part'
+     When `kind' is `STK_TEMPLATE_DEPENDENT_TYPE' these fields store
+     the needed information of this type when it concerns to
+     comparisons. *Note Dependent typenames::.
+
+
+File: mcxx-internals.info,  Node: Enum types,  Next: Class types,  Up: Direct types
+
+4.4.1 Enum types
+----------------
+
+An enum type requires additional information that it is stored in
+`enum_info_t'.
+
+     typedef
+     struct enum_information_tag
+     {
+         int num_enumeration;
+         struct scope_entry_tag** enumeration_list;
+     } enum_info_t;
+   
+`num_enumeration'
+     The number of enumerators (the name of the field should be fixed)
+     of this enum.
+
+`enumeration_list'
+     The symbols representing every enumerator.
+
+   For instance,
+
+     enum { A = 3, C = 4 } e;
+
+   Variable `e' will have `TK_DIRECT' of kind `STK_ENUM' and its enum
+info will reference two enumerators `A' and `C'.
+
+
+File: mcxx-internals.info,  Node: Class types,  Next: Dependent typenames,  Prev: Enum types,  Up: Direct types
+
+4.4.2 Class types
+-----------------
+
+* Menu:
+
+* Base classes::
+
+   Class types require lots of informations to be stored, in special in
+C++. This information is represented in `class_info_t'.
+
+     typedef
+     struct class_information_tag {
+         enum class_kind_t class_kind;
+
+         char is_dependent;
+
+         char is_local_class;
+         struct scope_entry_tag* enclosing_function;
+
+         decl_context_t inner_decl_context;
+
+         struct scope_entry_tag* destructor;
+
+         int num_conversion_functions;
+         struct scope_entry_tag** conversion_functions;
+
+         int num_copy_assignment_operator_functions;
+         struct scope_entry_tag** copy_assignment_operator_function_list;
+
+         int num_constructors;
+         struct scope_entry_tag** constructor_list;
+
+         int num_copy_constructors;
+         struct scope_entry_tag** copy_constructor_list;
+
+         int num_nonstatic_data_members;
+         struct scope_entry_tag** nonstatic_data_members;
+
+         int num_static_data_members;
+         struct scope_entry_tag** static_data_members;
+
+         int num_bases;
+         base_class_info_t** base_classes_list;
+     } class_info_t;
+   
+`class_kind'
+     This is the kind (or the key) of the class. It can be one of
+     `CK_STRUCT', `CK_UNION', `CK_CLASS'. This is currently unused, so
+     expect it to be set to `CK_STRUCT' all the time.
+
+`is_dependent'
+     States if the class type is dependent. This holds for template
+     classes that are not an explicit specialization.
+
+`is_local_class'
+`enclosing_function'
+     These two are unused. They should contain whether the class has
+     been defined inside a function body, and the function itself.
+
+`inner_decl_context'
+     The context (*note Scopes and contexts::) created by the class
+     itself when it is defined. Every member of this class will be
+     signed in this context.
+
+`destructor'
+     The symbol representing the function of the destructor.
+
+`num_conversion_functions'
+`conversion_functions'
+     A list of symbols representing user defined conversions by means
+     of conversion functions.
+
+`num_copy_assignment_operator_functions'
+`copy_assignment_operator_function_list'
+     A list of symbols that are copy assignment functions. Copy
+     assignment functions are those that implement the _assignment_
+     operation within the class.
+
+          struct A
+          {
+            // Copy assignment operator
+            A& operator=(const A& a);
+          };
+
+`num_constructors'
+`constructor_list'
+     A list of symbols that are constructors of the class. This
+     includes also the copy constructors.
+
+`num_copy_constructors'
+`copy_constructor_list'
+     A list of symbols that are copy constructor functions. Copy
+     constructor functions implement the _copy_ operation within a
+     class.
+
+          struct A
+          {
+            // Copy constructor
+            A(const A&);
+          };
+
+`num_nonstatic_data_members'
+`nonstatic_data_members'
+     A list of symbols that are nonstatic data members.
+
+          struct A
+          {
+            int a;
+          };
+
+     In C, all fields will fall in this category.
+
+`num_static_data_members'
+`static_data_members'
+     A list of symbols that are static data members.
+
+          struct A
+          {
+            static int a;
+          };
+
+`num_bases'
+`base_classes_list'
+     The number of base classes of the current class. Only the
+     nondependent bases are registered here. Dependent bases are not
+     considered.
+
+          struct A { };
+          template <typename _T>
+          struct B { };
+
+          template <typename _Q>
+          struct C : public A, B<_Q>
+          {
+          };
+
+     In the previous example, only `A' will be signed in as a base of
+     the primary template class `C'. Nondependent specializations of
+     `C' will have both classes registered as bases.
+
+
+
+File: mcxx-internals.info,  Node: Base classes,  Up: Class types
+
+4.4.2.1 Base classes
+....................
+
+Base classes require a bit more of information than just the symbol.
+
+     typedef
+     struct base_class_info_tag
+     {
+         struct type_tag* class_type;
+
+         struct scope_entry_tag* class_symbol;
+
+         access_specifier_t access_specifier;
+
+         char is_virtual;
+     } base_class_info_t;
+   
+`class_type'
+     This field is redundant. Field `class_symbol' always allows to get
+     the type. Maybe it will be removed in the future.
+
+`class_symbol'
+     The symbol of the base class
+
+`access_specifier'
+     States the kind of inheritance. This field is currently unused.
+
+`is_virtual'
+     Holds if the inheritance is virtual. This field is used when
+     performing class scope lookup in the inheritance hierarchy
+
+
+File: mcxx-internals.info,  Node: Dependent typenames,  Prev: Class types,  Up: Direct types
+
+4.4.3 Dependent typenames
+-------------------------
+
+Dependent typenames are those that are created by means of a qualified
+dependent type.  For instance both `a' and `b' have dependent typenames
+as types.
+
+     template <typename _T>
+     struct B { };
+
+     namespace C
+     {
+     template <typename _T>
+     struct D { };
+     }
+
+     template <typename _T>
+     struct A
+     {
+        typename _T::K1 a;
+        typename _T::Q1::K2 b;
+        typename B<_T>::K3 c;
+        typename C::D<_T>::K4 d;
+        typename C::D<_T>::Q2::K5 e;
+     };
+
+   Dependent typenames cannot be compared technically at compile time.
+The comparison will check if both types are necessarily the same under
+the templated environment. Dependent typenames are represented with
+three parts in `simple_type_t' (*note Direct types::).
+
+`dependent_entry'
+     The symbol where, after it, nothing can be looked up.
+
+`dependent_nested_name'
+     The path leading to `dependent_unqualifed_part' after
+     `dependent_entry'.
+
+`dependent_unqualifed_part'
+     The final part of the dependent typename.
+
+   Consider the following examples
+
+Type specifier                `dependent_entry'`dependent_nested_name'`dependent_unqualifed_part'
+--------------------------------------------------------------------------- 
+`typename _T::K1'             `_T'                          `K1'
+`typename _T::Q1::K2'         `_T'           `Q1::'         `K2'
+`typename B<_T>::K3'          `B<_T>'                       `K3'
+`typename C::D<_T>::K4'       `C::D<_T>'                    `K4'
+`typename C::D<_T>::Q2::K5'   `C::D<_T>'     `Q2::'         `K5'
+
+
+File: mcxx-internals.info,  Node: Pointer types,  Next: Array types,  Prev: Direct types,  Up: Type system
+
+4.5 Pointer types
+=================
+
+In this cathegory we group proper pointer types (`TK_POINTER'), pointer
+to member types (`TK_POINTER_TO_MEMBER') and reference types
+(`TK_REFERENCE'). *Note Type definition::.
+
+   Their information is represented in `pointer_info_t'.
+
+     typedef
+     struct pointer_tag
+     {
+         struct type_tag* pointee;
+
+         struct scope_entry_tag* pointee_class;
+     } pointer_info_t;
+   
+`pointee'
+     This is the pointed type for pointer types and pointer to member
+     types. For reference types this is the referenced type.
+
+`pointee_class'
+     For pointer to member types, this is the class of the pointer to
+     member type. It is null in any other case.
+
+
+File: mcxx-internals.info,  Node: Array types,  Next: Function types,  Prev: Pointer types,  Up: Type system
+
+4.6 Array types
+===============
+
+Array types (`TK_ARRAY') are represented in `array_info_t'.
+
+     typedef
+     struct array_tag
+     {
+         AST array_expr;
+         decl_context_t array_expr_decl_context;
+
+         struct type_tag* element_type;
+
+         char is_literal_string;
+     } array_info_t;
+   
+`array_expr'
+`array_expr_decl_context'
+     This is the size expression of the array. `array_expr' can be null
+     if the array type is unbounded.
+
+`element_type'
+     The type of the element of the array. If the array is
+     multidimensional this will be another array.
+
+`is_literal_string'
+     This flag states whether this type is a literal string. Literal
+     strings have array type both in C and C++. But C++ allows an
+     additional deprecated conversion from a literal string type to a
+     plain pointer to char. So the following is valid in C++
+
+          void f(char *c);
+
+          void g(void)
+          {
+              f("hello");
+          }
+
+   The type of `"hello"' is `const char[5]' (it is not 4 because of the
+additional `NULL' at the end) and a plain array-to-pointer conversion
+would yield `const char*' which in C++ cannot be converted to `char*',
+the type of parameter `c' in function `f'. So we need a way to
+distinguish this special case.
+
+
+File: mcxx-internals.info,  Node: Function types,  Next: Vector types,  Prev: Array types,  Up: Type system
+
+4.7 Function types
+==================
+
+Function types (`TK_FUNCTION') are represented in `function_info_t'.
+
+     typedef
+     struct function_tag
+     {
+         struct type_tag* return_type;
+
+         int num_parameters;
+         parameter_info_t** parameter_list;
+
+         int lacks_prototype;
+     } function_info_t;
+   
+`return_type'
+     This is the return type of the function. If the function type is
+     the one of a constructor, destructor or conversion functor it will
+     be null.
+
+`num_parameters'
+`parameter_list'
+     The list of parameters of the function.
+
+`lacks_prototype'
+     States if the function has been declared without prototype like in
+     C (not in C++) when the programmer writes function declarations
+     like
+          void f();
+          void g(a, b);
+
+   Parameter types are stored in `parameter_info_t' structures. This
+type is non opaque and is declared in `frontend/cxx-type-decls.h'
+because it is needed when creating a new function type.
+
+     typedef
+     struct parameter_info_tag
+     {
+         char is_ellipsis;
+         struct type_tag* type_info;
+     } parameter_info_t;
+   
+`is_ellipsis'
+     States if the parameter is an ellipsis. Note that in this case
+     both `type_info' and `original_type' will be null.
+
+`type_info'
+     The (adjusted) type of the parameter.
+
+   Note that the type of the parameter should be adjusted in order to
+satisfy the standard for both C and C++. Array types should be
+converted into pointer types and function types to pointer to function
+types.
+
+
+File: mcxx-internals.info,  Node: Vector types,  Next: Unresolved function reference types,  Prev: Function types,  Up: Type system
+
+4.8 Vector types
+================
+
+Vector types are a common extension in many compilers, like GCC, they
+are a type used in machines with SIMD(1) machines like SSE in x86 and
+VMX/Altivec in PowerPC. They are represented in `vector_info_t'.
+
+     typedef struct vector_tag
+     {
+         unsigned int vector_size;
+         struct type_tag* element_type;
+     } vector_info_t;
+   
+`vector_size'
+     This is the size in bytes of the whole vector. So for a machine
+     with support of vectors of 128 bits this will be 16.
+
+`element_type'
+     The type of the elements of the vector.
+
+   ---------- Footnotes ----------
+
+   (1) Single Instruction Multiple Data
+
+
+File: mcxx-internals.info,  Node: Unresolved function reference types,  Next: Ellipsis type,  Prev: Vector types,  Up: Type system
+
+4.9 Unresolved function reference types
+=======================================
+
+Unresolved function reference types (`TK_OVERLOAD') are only used in the
+context of expression type checking. They synthesize in one type a set
+of symbols that are candidates of overload resolution.
+
+
+File: mcxx-internals.info,  Node: Ellipsis type,  Prev: Unresolved function reference types,  Up: Type system
+
+4.10 Ellipsis type
+==================
+
+Ellipsis type (`TK_ELLIPSIS') is a singleton type(1) that represents an
+ellipsis type. It is only used in the context of overload resolution.
+
+   ---------- Footnotes ----------
+
+   (1) Only one instance of it will exist
+
+
+File: mcxx-internals.info,  Node: Symbols,  Next: Scopes and contexts,  Prev: Type system,  Up: Top
+
+5 Symbols
+*********
+
+* Menu:
+
+* Symbol definition::
+* Types and symbols::
+* Templates::
+
+   The source code not only defines types but also symbolic names,
+symbols, that link a name in the program with some piece of
+information. These symbols represent the entities of the program like
+functions, variables, templates, etc.
+
+
+File: mcxx-internals.info,  Node: Symbol definition,  Next: Types and symbols,  Up: Symbols
+
+5.1 Symbol definition
+=====================
+
+* Menu:
+
+* Entity specifiers::
+
+   A symbol is represented with the type `scope_entry_t'. It is
+declared in `frontend/cxx-scope-decls.h'. Rarely a value is used for
+symbols, since they can be shared among places, so symbols are used by
+means of pointers.
+
+     typedef
+     struct scope_entry_tag
+     {
+         enum cxx_symbol_kind kind;
+
+         decl_context_t decl_context;
+
+         const char* symbol_name;
+
+         int defined;
+
+         struct type_tag* type_information;
+
+         decl_context_t namespace_decl_context;
+
+         struct AST_tag* expression_value;
+
+         const char *file;
+         int line;
+
+         char do_not_print;
+
+         entity_specifiers_t entity_specs;
+
+         struct AST_tag* point_of_declaration;
+
+         dependency_info_t dependency_info;
+     } scope_entry_t;
+   
+`kind'
+     This is the kind of the symbol. Can be one of the following
+
+    `SK_CLASS'
+          This symbol names a class. This is a _class-name_.
+
+    `SK_ENUM'
+          This symbol names an enum. This is an _enum-name_.
+
+    `SK_ENUMERATOR'
+          This symbol names an enumerator. This is an _enumerator-name_.
+
+    `SK_FUNCTION'
+          This symbol is a function.
+
+    `SK_LABEL'
+          This symbol names a label.
+
+    `SK_NAMESPACE'
+          This symbol names a namespace. This is a _namespace-name_.
+
+    `SK_VARIABLE'
+          This symbol names an object declared in the program.
+
+    `SK_TYPEDEF'
+          This symbol names a typedef. This is a _typedef-name_.
+
+    `SK_TEMPLATE'
+          This symbol names a template. This is a _template-name_.
+
+    `SK_TEMPLATE_PARAMETER'
+          This symbol is a nontype template parameter.
+
+    `SK_TEMPLATE_TYPE_PARAMETER'
+          This symbol is a type template parameter.
+
+    `SK_TEMPLATE_TEMPLATE_PARAMETER'
+          This symbol is a template template parameter.
+
+    `SK_GCC_BUILTIN_TYPE'
+          This symbol is a GCC builtin type like `__builtin_va_list'.
+
+    `SK_DEPENDENT_ENTITY'
+          This symbol, once computed, has been found to be a dependent
+          entity, like `A<_T>::k' below. Nothing is known about it.
+               template <typename _T>
+               struct A { };
+
+               template <typename _T>
+               void f()
+               {
+                 A<_T>::k = 3;
+               }
+
+`decl_context'
+     The context (*note Scopes and contexts::) where this symbol was
+     actually created.
+
+`symbol_name'
+     The unqualified name of the symbol.
+
+     Some symbols have special or crafted names. Destructors have their
+     name prepended a tilde (~) and conversion functions always have
+     the name `$.operator'. Operators have their name canonicalized in
+     form `operator 'op.  Constructors have name `constructor
+     'class-name (even if the class they belong is a template class).
+
+`defined'
+     States if the symbol has been defined. It is more useful for
+     debugging than for anything useful since the compiler does not
+     normally enforce the One Definition Rule in C++.
+
+`type_information'
+     The type of this symbol if applicable. See *Note Types and
+     symbols:: and *Note Type system::.
+
+`namespace_decl_context'
+     If `kind' is `SK_NAMESPACE' then this is the context created by
+     the namespace itself.
+
+`expression_value'
+     For variables (`SK_VARIABLE') explicitly initialized (either with
+     `= expr' or using an initializer of the constructor, the latter
+     only in C++), the initializing expression is saved here. Parameter
+     types with default arguments in C++ are also save their default
+     argument expression here.
+
+     Enumerators (`SK_ENUMERATOR') with explicitly given enumeration
+     values also have the expression saved here.
+
+`file'
+`line'
+     These two fields give the coordinates of the symbol when it was
+     first declared. For implicitly specialized template types this
+     will be the (possibly approximate) point where the template
+     specialization was created.
+
+`do_not_print'
+     This is used for scope printing routines. This flag tells these
+     routines to skip this symbol when printing scopes. This is needed
+     for builtin symbols, that would add too much noise to the output,
+     and for the injected _class-name_ that would trigger an infinite
+     recursion when printing the members of a class.
+
+`entity_specs'
+     *Note Entity specifiers::.
+
+`point_of_declaration'
+     This is the whole declaration that contains the declaration of
+     this symbol.
+
+`dependency_info'
+     This field, computed in a lazy manner, can have one of the
+     following values
+
+    `DI_UNKNOWN'
+          Dependency information has not been computed for this type.
+
+    `DI_NOT_DEPENDENT'
+          Symbol has been found not dependent.
+
+    `DI_DEPENDENT'
+          Symbol has been found dependent.
+
+    `DI_BUSY'
+          Symbol is being computed its dependency. Some entities
+          require a recursive check that might involve rechecking
+          themselves. For instance,
+
+               template <int _N>
+               struct A
+               {
+                 enum E { E_1 = _N, E_2 };
+               };
+
+          In order to check whether `E_2' is a dependent expression by
+          itself, we have to check whether its related enum, `E', is a
+          dependent type. To check whether an enum is dependent we have
+          to check every enumerator and, of course, this includes `E_2'
+          so to cut the infinite recursion `E_2' is temporarily set to
+          `DI_BUSY' till we realize that `E_1' is dependent, then the
+          whole enum `E' is dependent and then `E_2' is dependent
+          too(1).
+
+
+   ---------- Footnotes ----------
+
+   (1) Well, maybe this is not the best algorithm but I think it
+achieve its goal.
+
+
+File: mcxx-internals.info,  Node: Entity specifiers,  Up: Symbol definition
+
+5.1.1 Entity specifiers
+-----------------------
+
+Besides important information like the type, symbols have lots of
+specifiers that modify their exact nature.  Since we do not want to
+clutter type `scope_entry_list_t' too much, many of these specifiers
+are stored in an `entity_specifiers_t'.
+
+     typedef struct entity_specifiers_tag
+     {
+         char is_static;
+
+         char is_register;
+
+         char is_extern;
+
+         char is_mutable;
+
+         char is_export;
+
+         char is_inline;
+
+         char is_virtual;
+
+         char is_pure;
+
+         char is_public;
+         char is_private;
+         char is_protected;
+
+         char is_builtin;
+
+         char is_conversion;
+
+         char is_constructor;
+         char is_conversor_constructor;
+
+         char is_explicit;
+
+         char is_template_parameter;
+         int template_parameter_nesting;
+         int template_parameter_position;
+
+         char is_parameter;
+         int parameter_position;
+
+         char is_member;
+         struct type_tag* class_type;
+
+         char is_injected_class_name;
+         struct scope_entry_tag* injected_class_referred_symbol;
+
+         const char* linkage_spec;
+
+         int num_exceptions;
+         struct type_tag** exceptions;
+
+         int num_parameters;
+         default_argument_info_t **default_argument_info;
+
+         char is_bitfield;
+         struct AST_tag* bitfield_expr;
+         decl_context_t bitfield_expr_context;
+
+         char after_typedef;
+     } entity_specifiers_t;
+   
+`is_static'
+     This flag holds whether the symbol has been given the specifier
+     `static'. Note that `static' specifier is rather overloaded in C
+     and C++ meaning several different things depending on the exact
+     context where it is used.
+
+`is_register'
+     Holds whether the variable has been declared with `register'
+     specifier.
+
+`is_extern'
+     Holds whether the declaration has been declared with `extern'.
+     Note that this flag is not enabled for global variables or
+     functions where no `extern' has been given.
+
+`is_mutable'
+     For nonstatic data members, this means that the field has been
+     marked as `mutable'.
+
+`is_export'
+     For templates, it states whether the template is `export' or not.
+     The compiler, as many others, does not honour this flag at all.
+
+`is_inline'
+     The specifier `inline' was given in the declaration of the
+     function.
+
+`is_virtual'
+     The nonstatic member function has been flagged as `virtual'.
+
+`is_pure'
+     The nonstatic member virtual function has been flagged, by means
+     of `= 0' syntax, as a pure virtual function.
+
+`is_public'
+`is_private'
+`is_protected'
+     These flags are not honoured by the compiler, they should contain
+     the exact access specification for this member entity.
+
+`is_builtin'
+     States that the symbol is actually an internal builtin type. This
+     flag is enabled both for builtin types like `__builtin_memcpy' and
+     for (temporary) builtins created during overload resolution.
+
+`is_conversion'
+     States that the function is a conversion function.
+
+`is_constructor'
+     States that the function is a constructor.
+
+`is_conversor_constructor'
+     States that the function is a conversor constructor.
+
+`is_explicit'
+     States that the constructor has been flagged as being `explicit'.
+
+`is_template_parameter'
+`template_parameter_nesting'
+`template_parameter_position'
+     Template parameters cannot be compared by name. Position plus the
+     nesting inside the template declaration is used as an identifier
+     to figure out that two different named template parameters in fact
+     are the same.
+
+     In the example below, the compiler must realize that `_T' and `_Q'
+     are exactly the same template parameter even if their names do not
+     match.
+
+          template <typename _T>
+          struct A { void f(_T); };
+
+          template <typename _Q>
+          void A<_Q>::f(_Q) { };
+
+`is_parameter'
+`parameter_position'
+     States whether this symbol is actually a parameter. Field
+     `parameter_position' contains its position.
+
+`is_member'
+`class_type'
+     States whether the symbol is a member. If it is, `class_type'
+     contains its (possibly named) class type.
+
+`is_injected_class_name'
+`injected_class_referred_symbol'
+     States whether this is a placeholder symbol for the _injected
+     class-name_. Field `injected_class_referred_symbol' contains a
+     pointer to the true class symbol.
+
+`linkage_spec'
+     This is a string representing the actual linkage specifier of this
+     symbol. The compiler does not honour this field.
+
+`num_exceptions'
+`exceptions'
+     For a function, this is a list of exceptions declared to be
+     throwable by the function.
+
+`num_parameters'
+     For a function, this is the number of parameters of the function.
+
+`default_argument_info'
+     Is an array with `num_parameters' elements. Elements are non-null
+     if for that parameter a default argument was given.  Correct code
+     will hold that the first non-null element implies the remaining
+     elements to be non-null as well.
+
+`is_bitfield'
+`bitfield_expr'
+`bitfield_expr_context'
+     States whether the symbol is a bitfield. Field `bitfield_expr'
+     contains the expression of the bitfield width and its context is
+     found in `bitfield_expr_context'.
+
+`after_typedef'
+     For a symbol of kind `SK_CLASS', this field is `1' only if the
+     symbol was created because it is the name of an unnamed class,
+     like the following example.
+
+          typedef struct
+          {
+            int a;
+          } A;
+          typedef struct
+          {
+            float b;
+          } B, C;
+          struct D
+          {
+            char c;
+          };
+
+   Both `A' and `B' will be symbols of kind `SK_CLASS' but they would
+be indistinguishable in C++ from the symbol `D' of kind `SK_CLASS', as
+well. This field allows such distinction when is needed. Symbol `C' is
+a `SK_TYPEDEF' because now the defined type is named, so it is an alias
+for the type of `B'.
+
+   Note that in C, above example would have created symbols `A' and `B'
+of kind `SK_CLASS', `C' of kind `SK_TYPEDEF' and `struct D' (instead of
+plain `D') of kind `SK_CLASS'.
+
+
+File: mcxx-internals.info,  Node: Types and symbols,  Next: Templates,  Prev: Symbol definition,  Up: Symbols
+
+5.2 Types and symbols
+=====================
+
+Although the compiler does not enforce this, some symbol kinds expected
+to be used only with some specific types.
+
+Class kind                           Valid types
+-------------------------------------------------------------------------- 
+`SK_CLASS'                           Class type. *Note Class types::.
+`SK_ENUM'                            Enum type. *Note Enum types::.
+`SK_ENUMERATOR'                      Their related enum type. *Note Enum
+                                     types::.
+`SK_FUNCTION'                        Function type. *Note Function
+                                     types::.
+`SK_LABEL'                           No type
+`SK_NAMESPACE'                       No type
+`SK_VARIABLE'                        Any valid type, except template
+                                     types.
+`SK_TYPEDEF'                         Any valid type, except template
+                                     types.
+`SK_TEMPLATE'                        A template type.
+`SK_TEMPLATE_PARAMETER'              No type
+`SK_TEMPLATE_TYPE_PARAMETER '        A valid type for a nontemplate
+                                     parameter: `int' or a pointer type.
+`SK_TEMPLATE_TEMPLATE_PARAMETER'     No type
+`SK_GCC_BUILTIN_TYPE'                A `STK_BUILTIN_TYPE'.
+`SK_DEPENDENT_ENTITY'                No type
+
+
+File: mcxx-internals.info,  Node: Templates,  Prev: Types and symbols,  Up: Symbols
+
+5.3 Templates
+=============
+
+Templates are one of the most interesting and difficult to soundly
+implement in C++(1). We need to represent templates, their
+specializations and to be able to instantiate them as needed.
+
+* Menu:
+
+* Template parameters::
+* Template arguments::
+* Template representation::
+* Template nature::
+
+   ---------- Footnotes ----------
+
+   (1) Our implementation can be largely improved.
+
+
+File: mcxx-internals.info,  Node: Template parameters,  Next: Template arguments,  Up: Templates
+
+5.3.1 Template parameters
+-------------------------
+
+The first important element of any given template, either class or
+function, are template parameters.  Template parameters are in the
+heading part of any _template-declaration_. There can be no template
+parameters for explicit specializations.
+
+     template <typename _T>
+     struct B { };
+
+   Template parameters are linked to the template entity, `A', in this
+example and does not have anything to do on any of its specializations.
+
+   Template parameters can be type template parameters, nontype template
+parameters and template template parameters. They are represented with
+symbols `SK_TEMPLATE_TYPE_PARAMETER', `SK_TEMPLATE_PARAMETER' [sic] and
+`SK_TEMPLATE_TEMPLATE_PARAMETER', respectively. These entities do not
+have type, and when they are not given name a fake name one is computed
+for them (after all they cannot be referenced if no name is given).
+
+   The only way to identify that two template parameters are the same
+is checking that they match in their kind (type, nontype or template)
+and their position and nesting match as well. See the example for fields
+`is_template_parameter', `template_parameter_nesting' and
+`template_parameter_position' in *Note Entity specifiers::.
+
+
+File: mcxx-internals.info,  Node: Template arguments,  Next: Template representation,  Prev: Template parameters,  Up: Templates
+
+5.3.2 Template arguments
+------------------------
+
+While template parameters are actually related to the template entity
+itself, template arguments are related to all possible specializations
+of the template.
+
+   Every template, when first declared, defines at least one basic (or
+primary) specialization where parameters and arguments are completely
+nonspecialized.
+
+     template <typename _T,
+               int _N,
+               template <typename> class _V>
+     struct A { };
+
+   This declares a (primary) specialization where none of the template
+arguments has been specialized at all. This is like saying
+
+     /* Invalid code
+
+       template <typename _T,
+                 int _N,
+                 template <typename> class _V>
+       struct A<_T, _N, _V> { };
+     */
+
+   but this is not allowed, since it is redundant. But the underlying
+idea is the same. We have defined a template where none of its
+arguments require a _special form_.
+
+   Class templates allow partial specializations, so we can force the
+template arguments to have a specific _form_ by means of their type,
+expression or template name (depending on the kind of the template
+parameter). An extreme case of a specialization are explicit
+specializations, like the one below, where all template arguments are
+completely defined and do not have any freedom degree.
+
+     template <>
+     struct A<int, 3, B> { }; // template-name 'B' above
+
+   Partial specializations allow to give some degree by relaxing the
+template argument form.
+
+     template <typename _Q, int _M>
+     struct A<_Q[_M], 3, B>;
+
+   Note that `_Q[_M]' describes a type _array `_M' of `_Q'_.  So this
+specialization will be only matched by those templates that as first
+template argument have as a type an array type of any size and any
+element type, remaining template arguments must be `3' and the
+template-name `B'. Like in this example,
+
+     A<float[12], 3, B> c;
+
+   Note that in partial specializations there are new template
+parameters that do not have anything to do with those declared in the
+primary specialization.  For another example,
+
+     template <template <typename> class _W, typename _F>
+     struct A <_W<_F>, 3, B> { };
+
+
+File: mcxx-internals.info,  Node: Template representation,  Next: Template nature,  Prev: Template arguments,  Up: Templates
+
+5.3.3 Template representation
+-----------------------------
+
+When the compiler finds a template declaration it signs in a
+_template-name_, this is, a symbol with kind `SK_TEMPLATE'. In its
+template type, it registers first the primary specialized template.
+Additional specializations can be signed later by means of partial
+specializations, explicit specializations or implicit specializations
+caused by semantic analysis.
+
+   For instance, consider
+
+     template <typename _T> // (1)
+     struct A { };
+
+     template <typename _T> // (2)
+     struct A<_T*> { typedef _T T; };
+
+     template <> // (3)
+     struct A<float> { };
+
+     void f(A<int*> a); // (4)
+
+     A<int*>::T k; // (5)
+
+   Declaration `(1)' will cause the creation of a symbol `A' with kind
+`SK_TEMPLATE' in the current scope. It has only one type template
+parameter as its template signature. Its primary specialization (*note
+Direct types::) will be constructed by using the class definition. Note
+that this primary specialization is a complete but dependent template
+specialized class type. *Note Template nature::.
+
+   Declaration `(2)' will cause a new specialization be added to the
+template type of `A'. This is also a complete but dependent template
+specialized class type.
+
+   Declaration `(3)' will cause, again, that a new specialization be
+added to the template type of `A'. This time is a complete independent
+template (since there is not any template parameter enclosing this
+declaration).
+
+   Declaration `(4)' will sign in function `f', but one of its
+parameters is an implicit specialization of the template `A'. In this
+case, since the specialization has not been referred previously, it
+will be added in the list of specializations of `A'. This is an
+incomplete independent template.
+
+   Declaration `(5)' will require an instantiation of `A<int*>'. Recall
+that declaration `(4)' already created such specialization, so it will
+not be created again but instantiated. Instantiation will convert
+`A<int*>' into a complete independent template. Instantiation will
+choose the partial template specialization declared in `(2)', so `T' is
+a valid member typename of `A<int*>'.
+
+
+File: mcxx-internals.info,  Node: Template nature,  Prev: Template representation,  Up: Templates
+
+5.3.4 Template nature
+---------------------
+
+The example in *Note Template representation:: already shown that, for
+template classes (at the moment, but it could be extended to template
+functions too) there are four template natures(1) represented in the
+field `template_nature' of `simple_type_t'. *Note Direct types::.
+
+   Complete means that the template specialization type has been
+defined, either by an explicit or partial specialization or either by
+an instantiation.  Independent means that the type can be described
+without using any template parameter.
+
+   Complete, dependent or independent, template specialized class types
+are eligible for instantiation of incomplete independent template
+specialized class type. Complete independent template specialized class
+types are already "instantiated" in the code.
+
+`TPN_COMPLETE_DEPENDENT'
+     The specialization class type has been defined. For instance
+
+          template <typename _T>
+          struct A { }; // Complete dependent
+
+          template <typename _T>
+          struct A<_T*> { typedef _T T; }; // Complete dependent
+
+`TPN_COMPLETE_INDEPENDENT'
+     The specialization is an explicit specialization or has been made
+     complete because of instantiation.
+
+          template <typename _T>
+          struct A // Complete dependent
+          {
+            typedef _T T;
+          };
+
+          template <>
+          struct A<int> // Complete independent
+          {
+          };
+
+          A<float>::T k;
+          // 'A<float>' will be complete independent after instantiation
+
+`TPN_INCOMPLETE_DEPENDENT'
+     This specialization has not been defined, just declared or named.
+     Some spurious incomplete dependent can appear because of templated
+     types but they are harmless because incomplete types do not play
+     any role in instantiation.
+
+          template <typename _T>
+          struct A; // Incomplete dependent
+
+          template <typename _T>
+          void f(A<_T*>);
+          // A new specialization 'A<_T*>' will be created
+          // to represent the type of the first parameter
+          // and it will be incomplete dependent
+
+`TPN_INCOMPLETE_INDEPENDENT'
+     This specialization is independent but has not been defined, just
+     declared or named. Many spurious incomplete types can appear but
+     they do not play any role in instantiation, except for the fact
+     that they can be instantiated if needed.
+
+          template <typename _T>
+          struct A; // Incomplete dependent
+
+          template <>
+          struct A<int>; // Incomplete independent
+
+          void f(A<int*>);
+          // A new specialization 'A<_T*>' will be created
+          // to represent the type of the first parameter
+          // and it will be incomplete independent
+
+
+   ---------- Footnotes ----------
+
+   (1) This is a rather bad name, maybe template specialization status
+would be better.
+
+
+File: mcxx-internals.info,  Node: Scopes and contexts,  Next: Extensible structures and schemas,  Prev: Symbols,  Up: Top
+
+6 Scopes and contexts
+*********************
+
+* Menu:
+
+* Scopes::
+* Contexts::
+* Scope link::
+
+   Scopes are the places where the compiler registers symbols. Contexts
+define the set of available scopes that determine which names can
+actually be used in a given place.
+
+
+File: mcxx-internals.info,  Node: Scopes,  Next: Contexts,  Up: Scopes and contexts
+
+6.1 Scopes
+==========
+
+* Menu:
+
+* Relationships between scopes::
+
+   In mcxx a scope is just a symbol table where symbols can be signed
+in. Scopes in mcxx allow overloading of names. This is only effectively
+used in C++. Scopes are represented by `scope_t' type declared in
+`cxx-scope-decls.h'.
+
+     typedef
+     struct scope_tag
+     {
+         enum scope_kind kind;
+
+         Hash* hash;
+
+         const char* qualification_name;
+
+         struct scope_tag* contained_in;
+
+         int num_used_namespaces;
+         struct scope_tag** use_namespace;
+
+         struct type_tag* class_type;
+
+         struct scope_entry_tag* function_entry;
+     } scope_t;
+   
+`kind'
+     This is the kind of the scope. Although all scopes are created
+     equal, their kind shows the intent of their existence. This field
+     can have the following values
+    `NAMESPACE_SCOPE'
+          This is the scope for _file-scope_ (in C) and for
+          _namespace-scope_ (in C++), this includes the _global scope_.
+
+    `FUNCTION_SCOPE'
+          This the scope for label identifiers both for C and C++.
+
+    `PROTOTYPE_SCOPE'
+          This is the scope where parameter identifiers are signed in
+          in function declarations, both in C and C++.
+
+    `BLOCK_SCOPE'
+          This is the scope of statements both in C and C++.
+
+    `CLASS_SCOPE'
+          This is the scope created by a class definition in C++.
+
+    `TEMPLATE_SCOPE'
+          This is a scope where all template parameter names of a given
+          template declaration nest are signed in. Only for C++. There
+          is one template scope for every non empty template header
+          seen during a template declaration.
+
+`hash'
+     This is the hashmap storing all the symbols
+     (`scope_entry_list_t'). *Note Symbols::.
+
+`qualification_name'
+     For C++ only, this is the basic qualification name of this scope.
+     For scopes of kind `NAMESPACE_SCOPE' this is the unqualified name
+     of the related namespace (unless it is the global scope, where
+     this will be null). For scopes of kind `CLASS_SCOPE' this is the
+     unqualified name of the class. If the class is a template
+     specialized class, it will only include the template-name (not its
+     specialization template arguments).
+
+     All other kinds of scopes have this field set to null.
+
+`contained_in'
+     The logically enclosing scope. *Note Relationships between
+     scopes::.
+
+`num_used_namespaces'
+`use_namespace'
+     The _used_ namespaces by means of `using namespace' directives.
+
+`class_type'
+     In scopes with kind of `CLASS_SCOPE' the class type after this
+     scope was created.
+
+`function_entry'
+     In scopes with kind of `FUNCTION_SCOPE' the function symbol after
+     this scope was created.
+
+
+File: mcxx-internals.info,  Node: Relationships between scopes,  Up: Scopes
+
+6.1.1 Relationships between scopes
+----------------------------------
+
+Scopes show in structured languages an obvious nesting relationship. To
+represent this basic relationship the field `contained_in' of `scope_t'
+is used. Although, this field is somewhat overloaded. Scopes of kind
+`FUNCTION_SCOPE' are never nested into any other scope. All other
+scopes can be nested but the meaning depends on the scope.
+
+   All scopes except for `TEMPLATE_SCOPE', the lexically enclosing _data
+environment_(1) in the code is their `contained_in' scope.
+
+     int a;
+
+     void f(int b);
+     void g(int c)
+     {
+       int d;
+       {
+         int e;
+       }
+       {
+         int h;
+       }
+     }
+
+   Symbol of variable `a' is signed in a `NAMESPACE_SCOPE', let us call
+it `scope:global'.  It does not have any enclosing scope since it is
+the global scope.
+
+   Symbol of function `f' is signed also in `scope:global'. Since it is
+a function declaration its parameter are signed in a `PROTOTYPE_SCOPE',
+let us call it `scope:proto:f:1', so `b' will be signed in
+`PROTOTYPE_SCOPE'. The enclosing scope of `scope:proto:f:1' is
+`scope:global'.
+
+   For the function definition of `g', the symbol `g' itself will be
+signed in `scope:global'.  Since it is a function definition it does not
+have a prototype scope but directly a block scope where all parameters
+and its outermost compound statement declarations are signed in. Let us
+call it `scope:block:f:0'. Symbols `c' and `d' are signed in
+`scope:block:f:0'.  The enclosing scope of `scope:block:f' is
+`scope:global'.
+
+   Every compound statement, and some other constructs like `if', `for'
+and `while' (in C++ and some of them in C99 too), define their own
+block scope. Thus, symbol `e' within function `g' will be declared in a
+scope `scope:block:f:0:0' and symbol `h' in a scope `scope:block:h:0:1'.
+Both scopes will have `scope:block:f:0' as their enclosing scope(2).
+
+   Template scopes, those with kind `TEMPLATE_SCOPE', are used in
+contexts (*note Contexts::) as side scopes that keep their own template
+scope hierarchy. An enclosing scope of a template scope if any, is
+always another template scope.
+
+     template <typename _T>
+     /* (1) */
+     struct A
+     {
+       template <typename _Q>
+       /* (2) */
+       void f(_T, _Q);
+     };
+
+   In `(1)' a template scope is created to register `_T'. It does not
+have any other enclosing template scope. In `(2)' another template
+scope is created to register `_Q'.  Its enclosing template scope is the
+one that we created to keep `_T'.
+
+   ---------- Footnotes ----------
+
+   (1) Data environment is used here instead of `scope' or `context'.
+
+   (2) Unintentionally, this explanation devises a form to internally
+name scopes in a plain global symbol table
+
+
+File: mcxx-internals.info,  Node: Contexts,  Next: Scope link,  Prev: Scopes,  Up: Scopes and contexts
+
+6.2 Contexts
+============
+
+* Menu:
+
+* Context definition::
+
+   Contexts synthesize a set of scopes that are relevant in a given
+region of code. If we were to develop a C-only compiler the exact
+context would require just knowing the file scope.  In function
+definitions we would need also a nesting of block scopes and a function
+scope.  In function declarations a nest of prototype scopes would be
+also needed. But after all, just simple hierarchic nests would be
+needed.
+
+   C++ makes this more difficult since several other scopes, not only
+those defined naturally by the language structure, have to be taken
+into account. In addition to those scopes for C, we need to know which
+scopes are being _used_ (by means of `use namespace' directives).
+Furthermore, within a class, not only the current class scope is
+considered but also the bases (or parent classes) of the class are
+involved in the context.
+
+   Some declarations do not declare anything in the current (natural)
+scope but in an enclosing scope, like enumerators that are declared in
+the first enclosing namespace scope.
+
+
+File: mcxx-internals.info,  Node: Context definition,  Up: Contexts
+
+6.2.1 Context definition
+------------------------
+
+* Menu:
+
+* Current scope in a context::
+* Declaration context flags::
+
+   Contexts are represented by `decl_context_t'. In contrast to many
+other internal structures seen so far, this one is always used by
+value. Using a value has the benefit that it is easier to take a
+snapshot of the exact context in any given place. This is useful, for
+instance, when we want to evaluate a constant expression later or when
+we want to parse something in a specific context. This type is defined
+in `frontend/cxx-scope-decls.h'.
+
+     typedef struct decl_context_tag
+     {
+         decl_flags_t decl_flags;
+
+         struct scope_tag* namespace_scope;
+         struct scope_tag* global_scope;
+         struct scope_tag* block_scope;
+
+         struct scope_tag* template_scope;
+         struct template_parameter_list_tag *template_parameters;
+         int template_nesting;
+
+         struct scope_tag* class_scope;
+         struct scope_tag* function_scope;
+         struct scope_tag* prototype_scope;
+
+         struct scope_tag* current_scope;
+     } decl_context_t;
+   
+`decl_flags'
+     This is a set of declaration flags that influence the way things
+     are looked up or signed in the scopes. *Note Declaration context
+     flags::.
+
+`namespace_scope'
+     The innermost enclosing namespace scope in the current context. In
+     global scope it is the same as `global_scope'.
+
+`global_scope'
+     The global namespace scope.
+
+`block_scope'
+     The innermost enclosing block scope. It is null in namespace scope
+     and class scope.
+
+`template_scope'
+     The innermost enclosing template scope. It is null if we are not
+     in a template declaration.
+
+`template_parameters'
+     List of template parameters of the innermost enclosing template
+     scope.  It is null if we are not in a template declaration.
+
+`template_nesting'
+     The nesting level of the innermost enclosing template scope. Zero
+     if we are not in a template declaration.
+
+`class_scope'
+     The innermost enclosing class scope. It is null in namespace scope
+     and in block scopes of non member functions.
+
+`function_scope'
+     Current function scope. It is null in namespace scope and class
+     scope.
+
+`current_scope'
+     This is the current scope where new entities will be signed in.
+     *Note Current scope in a context::.
+
+
+File: mcxx-internals.info,  Node: Current scope in a context,  Next: Declaration context flags,  Up: Context definition
+
+6.2.1.1 Current scope in a context
+..................................
+
+Field `current_scope' stores the current scope where new entities will
+be signed in. This field is updated to point one of the previous
+fields, except for `template_scope', as long as the scope changes.
+
+   Consider the following example
+
+     // (1)
+     int a;
+
+     namespace B
+     {
+         // (2)
+         int b;
+
+         class C
+         {
+             // (3)
+             int c;
+         };
+
+         namespace D
+         {
+             // (4)
+             int d;
+         }
+     }
+
+   In `(1)' the context will have only one scope that will be pointed
+at the same time by `global_scope', `namespace_scope' and
+`current_scope'. This makes that `a' gets signed in the global scope
+has it has to be.
+
+   Namespace `B' is also signed in global scope but it creates a new
+context, `(2)', where `namespace_scope' points to a newly created
+namespace scope (wich its `contained_in' field points to the global
+scope).  The `current_scope' of the namespace context created by `B'
+refers to this newly created namespace scope. Thus, `b' is signed in
+the namespace `B' (`B::b').
+
+   Class name `C' is also signed in as `B::C'. Since it is a class it
+creates a class scope, `(3)'. This time `current_scope' will point to a
+newly created `class_scope' (which its `contained_in' will point to the
+scope of namespace `B'). Within the class, this is the `current_scope'
+so nonstatic member `c' is signed in the class scope of `C'.
+
+   The same applies for `D' and `d'. The former is signed in the
+namespace of `B', thus `B::D'. The latter is signed in the namespace of
+`D', thus `B::D::d'.
+
+   Template scopes form their own stack.
+
+     template <typename _T>
+     struct A
+     {
+       template <typename _Q>
+       void f(_T, _Q);
+     };
+
+     template <typename _T1>
+     // (1)
+     template <typename _Q1>
+     // (2)
+     void A<_T1>::f(_T1, _Q1);
+
+   In `(1)', `current_scope' is still the global scope but
+`template_scope' will contain `_T1'. In `(2)', `current_scope' of the
+context is still the global scope as well. Its `template_scope' will
+contain `_Q1' and the `contained_in' field of this template scope will
+refer to the template scope where `_T1' was signed in.
+
+
+File: mcxx-internals.info,  Node: Declaration context flags,  Prev: Current scope in a context,  Up: Context definition
+
+6.2.1.2 Declaration context flags
+.................................
+
+Sometimes, operations with contexts and scopes must be slightly modified
+because of language requirements or implementation issues. Flags in
+contexts are used for this.
+
+   Since contexts are always passed by value, many of these flags have
+a transient life just to be useful in scope query functions and
+functions that create new symbols.
+
+   These flags are bitmaps, and more than one can be enabled at the
+same time. They can take one or more of the following values.
+
+     DF_TEMPLATE
+     DF_CONSTRUCTOR
+     DF_NO_DECLARATORS
+     DF_FRIEND
+     DF_EXPLICIT_SPECIALIZATION
+     DF_ALLOW_REDEFINITION
+     DF_UNQUALIFIED_NAME
+     DF_QUALIFIED_NAME
+     DF_LABEL
+     DF_ONLY_CURRENT_SCOPE
+     DF_DEPENDENT_TYPENAME
+     DF_ELABORATED_NAME
+     DF_PARAMETER_DECLARATION
+     DF_NO_INJECTED_CLASS_NAME
+     DF_UPDATE_TEMPLATE_ARGUMENTS
+     DF_INSTANTIATING
+
+`DF_TEMPLATE'
+     If this is enabled, declarations are within a template declaration.
+     This flag is cleared for members of a class, which in turn can be
+     "template declarated".
+
+`DF_CONSTRUCTOR'
+     It states that the current declaration is a constructor, so no
+     type-specifier is expected and a special name "`constructor
+     class-name'" is used when looking up in the scope
+
+`DF_NO_DECLARATORS'
+     It states that the current declaration does not have any
+     declarator.  It is mainly used for elaborate-type-specifiers
+     (which change their behaviour depending on having or not
+     declarators) and templated-declarations
+
+`DF_FRIEND'
+     It states that the declaration has a 'friend' specifier
+
+`DF_EXPLICIT_SPECIALIZATION'
+     It states that, under the same scope as `DF_TEMPLATE', the
+     declaration is under a `template<>'
+
+`DF_ALLOW_REDEFINITION'
+     Allows redefinition of an identifier already defined, used in
+     compiler phases since they might need to redefine some symbols.
+
+`DF_UNQUALIFIED_NAME'
+     Lookup is being performed on an unqualified name
+
+`DF_QUALIFIED_NAME'
+     Lookup is being performed on a qualified name.
+
+`DF_LABEL'
+     We are looking up a label
+
+`DF_ONLY_CURRENT_SCOPE'
+     Lookup will consider only the current scope and not any other
+     scope in the context.
+
+`DF_DEPENDENT_TYPENAME'
+     Enables examining dependent types (used for dependent typenames)
+
+`DF_ELABORATED_NAME'
+     Enables C++ weird lookup for `struct's, `union's and `enum's. This
+     filters any non type symbol that might clash the name.
+
+          struct A { };
+          A A;
+          // Previous declaration hid typename 'A' so
+          // 'A b;' is wrong and we need to use
+          // 'struct A' instead
+          struct A b;
+
+     This is only needed in C++, since in C, the class key is prepended
+     in the symbol name, so what it is actually signed in is `struct A'
+     and not just `A' like in C++
+
+`DF_PARAMETER_DECLARATION'
+     States that we are under parameter declaration. This avoids
+     declaring new functions when the parameter type is a function type.
+
+`DF_NO_INJECTED_CLASS_NAME'
+     States that the lookup should ignore injected class-names
+
+`DF_UPDATE_TEMPLATE_ARGUMENTS = BITMAP(14),'
+     Updates template arguments for a given specialization, used only
+     when defining an already declared template specialization (since
+     we want the names be updated)
+
+`DF_INSTANTIATING'
+     We are instantiating thus some bits of the instantiated class will
+     be skipped.  In particular inlined function definitions are not
+     examined their function body.
+
+
+File: mcxx-internals.info,  Node: Scope link,  Prev: Contexts,  Up: Scopes and contexts
+
+6.3 Scope link
+==============
+
+Since we are not storing the related context(1) in the AST (*note
+Abstract Syntax Tree::), just having a reference to a tree is quite
+useless because no symbolic information is available.
+
+   Instead of storing the scope in a tree, doing so would carry
+contextual information that might be problematic when freely moving
+trees around, we define a scope link structure that is able, given a
+tree, to retrieve its scope by using a map.
+
+   In this map all tree defining or referring contexts are stored. When
+a given tree is asked its context, a traversal towards its root is
+performed looking for a tree with a known related context.
+
+   This structure is declared in `frontend/cxx-scopelink-decls.h' as an
+opaque type defined in `frontend/cxx-scopelink.c'.
+
+     typedef
+     struct scope_link_tag
+     {
+         Hash* h;
+         decl_context_t global_decl_context;
+     } scope_link_t;
+   
+`h'
+     The hash storing `scope_link_entry_t' entries.
+
+`global_decl_context'
+     A global context used when no other context found in the tree.
+
+   Scope link entries only keep a context.
+
+     typedef struct scope_link_entry_tag
+     {
+         decl_context_t decl_context;
+     } scope_link_entry_t;
+   
+   ---------- Footnotes ----------
+
+   (1) In fact, this structure should be called context link
+
+
+File: mcxx-internals.info,  Node: Extensible structures and schemas,  Next: Introduction to TL,  Prev: Scopes and contexts,  Up: Top
+
+7 Extensible structures and schemas
+***********************************
+
+* Menu:
+
+* Extensible schema::
+* Extensible structure::
+* Using the extensible structure::
+
+   All the previous structures are probably enough for a typechecking
+frontend but might turn insufficient for later compiler phases. These
+phases might need to synthesize more information and being able to
+extend the existing structures, e.g. a new attribute for symbols, makes
+them easier to develop.
+
+   To provide this functionality an extensible structure mechanism
+exists in the compiler. Although at the time of writing this document
+it is only used for AST (*note Abstract Syntax Tree::) the original
+idea was to add this feature to the most of the structures seen in
+previous chapters.
+
+   Files implementing the extensible structure are `lib/extstruct.c' and
+`lib/extstruct.h'.
+
+
+File: mcxx-internals.info,  Node: Extensible schema,  Next: Extensible structure,  Up: Extensible structures and schemas
+
+7.1 Extensible schema
+=====================
+
+Any extensible structure has a schema, that can be extended at run-time,
+
+     typedef
+     struct extensible_schema_item_tag
+     {
+         size_t size;
+         int field_order;
+     } extensible_schema_item_t;
+
+     typedef
+     struct extensible_schema_tag
+     {
+         Hash *hash;
+         int num_fields;
+     } extensible_schema_t;
+   
+   Data type `extensible_schema_item_t' represents an item in the
+schema, represented by `extensible_schema_t'. A schema is a set of
+these items identified by a name. A schema item belongs to only one
+schema, i.e. it cannot be reused in several schemas.
+
+   Fields of a schema item are
+
+`size'
+     This is the size in memory of the entity represented in the
+     extensible structure.
+
+`field_order'
+     This is the field order within the schema. This number is set when
+     a new schema item is added to a schema.
+
+   Fields of a schema are
+
+`hash'
+     A hash providing the map between a name and a schema item.
+
+`num_fields'
+     The number of schema items linked to this schema.
+
+
+File: mcxx-internals.info,  Node: Extensible structure,  Next: Using the extensible structure,  Prev: Extensible schema,  Up: Extensible structures and schemas
+
+7.2 Extensible structure
+========================
+
+Once we have a schema we can define extensible structs on top of it.
+
+     typedef
+     struct extensible_data_item_tag
+     {
+         // Index of the field in the schema
+         int schema_index;
+
+         // The data
+         char* data;
+     } extensible_data_item_t;
+
+     typedef
+     struct extensible_struct_tag
+     {
+         extensible_schema_t *schema;
+
+         int num_items;
+         extensible_data_item_t *items;
+     } extensible_struct_t;
+   
+   Fields of `extensible_struct_t' are
+
+`schema'
+     The related schema of this extensible struct. A given schema can
+     have several structs related to it.
+
+`num_items'
+
+`items'
+     Set of data items, of type `extensible_data_item_t', stored in
+     current extensible struct.
+
+   The extensible structure contains data items, of type
+`extensible_data_item_t', with the following fields
+
+`schema_index'
+     The field index in the schema of the related extensible struct.
+
+`data'
+     A pointer to raw data of this field.
+
+
+File: mcxx-internals.info,  Node: Using the extensible structure,  Prev: Extensible structure,  Up: Extensible structures and schemas
+
+7.3 Using the extensible structure
+==================================
+
+To use an extensible schema just add a field to the structure that you
+want extensible.
+
+     struct my_struct
+     {
+       extensible_struct_t* extended_struct;
+     };
+
+ -- Function: void extensible_schema_init (extensible_schema_t* SCHEMA);
+     Initializes the schema pointed by SCHEMA.
+
+ -- Function: int extensible_schema_add_field (extensible_schema_t*
+          SCHEMA, const char* FIELD_NAME, size_t FIELD_SIZE);
+     Adds a field named FIELD_NAME to the schema SCHEMA with size
+     FIELD_SIZE.
+
+ -- Function: void extensible_struct_init (extensible_struct_t*
+          EXTENSIBLE_STRUCT, extensible_schema_t* SCHEMA);
+     Initializes the extensible struct EXTENSIBLE_STRUCT with the given
+     schema SCHEMA.
+
+ -- Function: void* extensible_struct_get_field_pointer
+          (extensible_schema_t* SCHEMA, extensible_struct_t*
+          EXTENSIBLE_STRUCT, const char* FIELD_NAME);
+     Gets a pointer to storage in the extended struct EXTENSIBLE_STRUCT
+     under the given schema SCHEMA. Note that SCHEMA parameter should
+     be the `schema' field of EXTENSIBLE_STRUCT.
+
+     This function allocates space if this is the first time this field
+     is requested. Otherwise it returns the previous allocated space.
+
+     If the field FIELD_NAME does not exist it returns null.
+
+ -- Function: void* extensible_struct_get_field_pointer_lazy
+          (extensible_schema_t* SCHEMA, extensible_struct_t*
+          EXTENSIBLE_STRUCT, const char* FIELD_NAME, char* IS_FOUND);
+     This function is equivalent to
+     `extensible_struct_get_field_pointer' except that it does not
+     allocate any space.
+
+     Thus, unless a member has been given any storage using
+     `extensible_struct_get_field_pointer', it will return null. To
+     distinguish this null from the case of an nonexistent field in the
+     schema, IS_FOUND will be set to 1 when the field is found.
+
+
+
+File: mcxx-internals.info,  Node: Introduction to TL,  Next: Examples of TL,  Prev: Extensible structures and schemas,  Up: Top
+
+8 Introduction to TL
+********************
+
+* Menu:
+
+* History::
+* Compiler phases::
+* Wrapper classes::
+* Creating source::
+* Dealing with common language constructs::
+* Functors and signals::
+* Traversing trees::
+* Reference counted objects::
+
+
+File: mcxx-internals.info,  Node: History,  Next: Compiler phases,  Up: Introduction to TL
+
+8.1 History
+===========
+
+Previous incarnations of Mercurium compilers used a template language
+to drive the transformations. This template language was usually called
+`TPL'.  Although this kind of template-driven language, a sort of
+interpreted language interspersed with chunks of code, allowed quick
+tests for some constructions it always fell short in expressivity. So
+we decided to push for a more generic and common approach: compiler
+phases written in C++.
+
+   Although this name is completely unofficial, TL stands for
+Transformation Library.
+
+
+File: mcxx-internals.info,  Node: Compiler phases,  Next: Wrapper classes,  Prev: History,  Up: Introduction to TL
+
+8.2 Compiler phases
+===================
+
+Compiler phases are run after the compiler has successfully parsed the
+input code (together with the creation of its related symbolic
+information and the needed types). Compiler phases are written in C++
+and are dynamically loaded libraries, loaded by the compiler as stated
+by the configuration. They are run in the same order as they appear in
+the compiler configuration.
+
+   Every compiler phase receives a DTO (Data Transfer Object) with the
+basic information to work: the translation unit abstract syntax tree
+(*note Abstract Syntax Tree::) and a suitable scope link (*note Scope
+link::).
+
+   Phases can add information to this DTO, so subsequent phases can use
+information synthesized by previous ones. This makes this part behave
+more like a compiler phase pipeline.
+
+   A phase that wants to implement a transformation has to modify the
+given abstract syntax tree. To achieve this it can use several
+approaches but the main approach used in mcxx is creating source code
+on the fly. This new source can then later be parsed and used as any
+other tree coming from the original source. The newly generated trees
+are commonly used to replace existing ones but can also be used as an
+intermediate step for other transforms.
+
+
+File: mcxx-internals.info,  Node: Wrapper classes,  Next: Creating source,  Prev: Compiler phases,  Up: Introduction to TL
+
+8.3 Wrapper classes
+===================
+
+Instead of working with the internal compiler structures (detailed in
+*Note Abstract Syntax Tree::, *Note Type system::, *Note Symbols::,
+*Note Scopes and contexts:: and *Note Extensible structures and
+schemas::) TL provides several C++ classes wrapping all these
+structures. Their goal is to be a nicer interface and also to provide
+an extra freedom degree, allowing to change the internals of the
+compiler without disturbing too much the already written compiler
+phases.
+
+   Following table summarizes relationship between classes and the
+wrapped entity.
+
+Compiler       Wrap class
+entity         
+------------------------------ 
+`AST'          `TL::AST_t'
+`type_t*'      `TL::Type'
+`scope_entry_t*'`TL::Symbol'
+`decl_context_t'`TL::Scope'
+`scope_link_t*'`TL::ScopeLink'
+
+   Class `TL::Object' is a base class for all these types and provides
+virtual methods to implement access to the extensible structure (*note
+Extensible structures and schemas::.  Currently, only `TL::AST_t'
+provides such facility since at the moment is the only compiler
+structure using it(1).
+
+   ---------- Footnotes ----------
+
+   (1) Though the idea is that all the others do use it
+
+
+File: mcxx-internals.info,  Node: Creating source,  Next: Dealing with common language constructs,  Prev: Wrapper classes,  Up: Introduction to TL
+
+8.4 Creating source
+===================
+
+* Menu:
+
+* Parsing the created source::
+
+   When performing transformations, the main technique involves class
+`TL::Source'. This class, that can be viewed as a powerful string, is
+used to create source code on the fly.
+
+   An interesting feature of this class is the fact that it allows
+either a top-down or bottom-up approach when creating code. A top-down
+approach allows first to lay out the code and then fill it. For
+instance.
+
+     Source src;
+     Source initialization_src, execution_src;
+
+     src
+       << initialization_src
+       << execution_src
+       ;
+
+     initialization_src
+       << "int a;"
+       ;
+
+     execution_src
+       << "a = 3;"
+       ;
+
+   When `src' is parsed it will use the contents of `initialization_src'
+and `execution_src' at the moment of parsing.  `TL::Source::operator<<'
+is used to append either another `TL::Source', a `std::string' (or
+something convertible into it) or a `int' that will be represented in
+base-10.
+
+
+File: mcxx-internals.info,  Node: Parsing the created source,  Up: Creating source
+
+8.4.1 Parsing the created source
+--------------------------------
+
+A `TL::AST_t' can be obtained by parsing a `TL::Source'. Parsing is a
+somewhat fragile operation and it requires context. While some
+structures are less "context-demanding" than others, parsed code should
+be, at the maximum extent possible, always valid(1).
+
+   Two things are always required when parsing a code. A reference tree
+(`TL::AST_t') and a valid scope link (`TL::ScopeLink'). The reference
+tree plus the scope link is used to retrieve the valid context where
+the new tree will be parsed. Notice that code that declares entities,
+will create new symbols in the parsing context, and so will do code
+that create new contexts.
+
+   Scope link can always be obtained from the DTO (there is, actually,
+only one scope link in the compiler). Reference tree is a tree with the
+same context as the parsed code, normally it is the tree being replaced
+or a surrounding tree, otherwise.
+
+   ---------- Footnotes ----------
+
+   (1) Sometimes this is not possible (for instance, because we are
+referencing a variable that does not already exist in the original
+context, it will be actually declared later). When parsing fails
+because of this, parsing a fake code defining a new context with the
+needed information can be used as a workaround.
+
+
+File: mcxx-internals.info,  Node: Dealing with common language constructs,  Next: Functors and signals,  Prev: Creating source,  Up: Introduction to TL
+
+8.5 Dealing with common language constructs
+===========================================
+
+In order to deal with common language constructs in C and C++, TL
+provides additional wrapping classes. They all derive from
+`TL::LangConstruct'. Every `TL::LangConstruct' is built using a tree
+and a scope link. Following table summarizes these classes:
+
+`TL::Declaration'
+     A declaration of an entity in C or C++. A declaration is always
+     defined by one `TL::DeclarationSpec' and zero or more
+     `TL::DeclarationEntity'.
+
+`TL::DeclarationEntity'
+     A declared entity in a declaration.
+
+`TL::DeclarationSpec'
+     Wraps the declaraton specifiers of a given declaration. It allows
+     to get the `TL::TypeSpec' involved in the declaration.
+
+`TL::Expression'
+     Represents any expression in C/C++. This class allows navigating
+     easily through the expression and getting its related type
+     (provided it has been properly computed).
+
+`TL::FunctionDefinition'
+     This class wraps an entire function definition. This is commonly
+     used to get the name of the enclosing function definition.
+
+`TL::IdExpression'
+     This class wraps an occurrence of a reference to a symbol.
+
+`TL::ParameterDeclaration'
+     A special kind of declaration just for parameters obtained using
+     `TL::DeclarationEntity' that represent function declarations.
+
+`TL::Statement'
+     A generic statement. Allows to know whether the statement is a
+     compound statement and getting its inner statements.
+
+`TL::ForStatement'
+     A specialized `TL::Statement' to deal with for-loops.
+
+`TL::TypeSpec'
+     In `TL::DeclarationSpec', the tree that represents the basic type
+     of the declaration.
+
+
+File: mcxx-internals.info,  Node: Functors and signals,  Next: Traversing trees,  Prev: Dealing with common language constructs,  Up: Introduction to TL
+
+8.6 Functors and signals
+========================
+
+* Menu:
+
+* Predicates over AST::
+
+   In several places the compiler defines a callback-strategy. To
+safely implement callbacks in C++, TL provides a subset of callback
+facilities, namely `TL::Functor' and `TL::Signal1'.
+
+   `TL::Signal1' is the entity firing a callback. To it several
+functors can be connected and their code will be run when signaled. A
+`TL::Functor' wraps a function receiving one parameter (or one plus the
+implicit object, for member functions). This allows an homogeneous
+approach when dealing with this callback style.
+
+   A functor can be explicitly created, by defining a new class
+inheriting from `Functor<Ret, Type>' where `Ret' is the return type and
+`Type' is the parameter type. Most of the time `Ret' is left `void'. An
+important exception to this are `TL::Predicate<T>' that are exactly
+`Functor<bool, T>' and are normally used to test properties, in
+particular when traversing trees.
+
+   Another way to get a functor is using the auxiliar function
+`TL::functor' that can be applied to many kinds of functor-like objects
+and returns a suitable `TL::Functor' for it.
+
+   Any class inheriting from `TL::Functor<Ret, Type>' will have to
+implement `Ret TL::Functor<Ret, Type>::operator()(Type& t) const'. This
+function should not have effects on the parameter `Type& t' because it
+is valid to call the functor with a `const Type&' (and the overriden
+method will be called).
+
+
+File: mcxx-internals.info,  Node: Predicates over AST,  Up: Functors and signals
+
+8.6.1 Predicates over AST
+-------------------------
+
+The most usual use for predicates are `TL::PredicateAST<ATTR-NAME>'.
+Parameter `ATTR-NAME' is an attribute of the AST stating a boolean
+property of it. For instance `TL::PredicateAST<LANG_IS_FOR_STATEMENT>'
+returns `true' for trees representing a for-statement.
+
+   The list of attributes related to trees is defined in file
+`cxx-attrnames.def'. Most of the attributes there are self documenting
+and are linked to the tree by the semantic phase in `cxx-buildscope.c'
+and `cxx-exprtype.c'.
+
+
+File: mcxx-internals.info,  Node: Traversing trees,  Next: Reference counted objects,  Prev: Functors and signals,  Up: Introduction to TL
+
+8.7 Traversing trees
+====================
+
+Traversals in the tree, to find items to potentially be transformed,
+are implemented using `TL::DepthTraverse' (a subclass of
+`TL::Traverse', although no other derived class of it exists).
+
+   A `TL::TraverseFunctor' is a class defining two methods `preorder'
+and `postorder' that will be run in preorder and postorder moment when
+performing the traversal of a node that matches the related functor.
+
+   Matching of a tree is defined by `TL::TraverseASTFunctor'. This
+functor receives a `AST_t' and returns a `ASTTraversalResult'. This
+value states whether the current node matches (if it does, then its
+`postorder' and `preorder' functions of the related functor, see below,
+will be called) and if the traverse must recurse for it (sometimes we
+are not interested in matching anything but the outermost matching
+entity of a nested tree).
+
+   A `TL::TraverseASTFunctor' is related to a `TL::TraverseFunctor' by
+means of method `TL::DepthTraverse::add_functor'.
+
+   Once all functors we are interested in are added in the
+`TL::DepthTraverse' object, we can fire the traversal using
+`TL::DepthTraverse::traverse'.
+
+
+File: mcxx-internals.info,  Node: Reference counted objects,  Prev: Traversing trees,  Up: Introduction to TL
+
+8.8 Reference counted objects
+=============================
+
+In several contexts the compiler needs shared objects with hard to
+predict lifetimes. This makes unsuitable the use of pointers, so
+reference counted pointers are used.
+
+   The class implementing a reference counted pointer is
+`RefPtr<Class>', where `Class' is a class with two member functions
+`obj_reference' and `obj_unreference' that are called everytime
+somebody keeps a new reference to this object and everytime somebody
+discards one of this references, respectively.  Most of the time the
+implementation of a class designed to be reference counted will be as
+simple as
+
+     void obj_reference()
+     {
+       this->_refcount++;
+     }
+
+     void obj_unreference()
+     {
+       this->_refcount--;
+
+       if (this->_refcount == 0)
+       {
+         delete this;
+       }
+     }
+
+   Note that with the previous schema, cycles will not be properly
+freed. If you ever have cycles you will need a fairly more
+sophisticated approach not covered here.
+
+
+File: mcxx-internals.info,  Node: Examples of TL,  Next: Installation of mcxx,  Prev: Introduction to TL,  Up: Top
+
+9 Examples of TL
+****************
+
+* Menu:
+
+* Hello world::
+* Static call graph::
+
+   This chapter is devoted to introduce you several examples when using
+TL, trying to cover the most popular transformations.
+
+   This chapter does not give any detail on specific issues like how to
+compile and build the phases, this is later addressed in *Note
+Installation of mcxx::.
+
+
+File: mcxx-internals.info,  Node: Hello world,  Next: Static call graph,  Up: Examples of TL
+
+9.1 Hello world
+===============
+
+* Menu:
+
+* Phase information::
+* Phase parameters::
+
+   In order to get familiar with the shape of a new compiler phase we
+will write one phase that just writes `Hello world' when loaded and
+when run.  Following code is to be written in a file called
+`tl-helloworld.cpp'.
+
+     #include "tl-compilerphase.hpp"
+     #include <iostream>
+
+     namespace TL
+     {
+         class HelloWorld : public CompilerPhase
+         {
+             public:
+                 HelloWorld()
+                 {
+                     std::cout
+                         << "Hello world (phase loaded)"
+                         << std::endl;
+                 }
+
+                 void run(DTO& dto)
+                 {
+                     std::cout
+                         << "Hello world (phase run)"
+                         << std::endl;
+                 }
+         };
+     }
+
+     EXPORT_PHASE(TL::HelloWorld);
+
+   A compiler phase is just a class that inherits from
+`TL::CompilerPhase'.  Its constructor is invoked when the compiler
+loads the phase, just before parsing anything. This is done this way in
+order for phases to influence the parsing (for instance, they might
+register new constructions). The constructor must be invokeable with
+zero arguments.
+
+   Every derived class of `TL::CompilerPhase' must implement member
+function `run(DTO&)'. This is the entry point of the compiler phase.
+The phase starts in this function and ends leaving it. This function is
+invoked by the compiler for every file compiled (normally one).
+
+   Every phase, even if split in several files, must have one (and only
+one) `EXPORT_PHASE' definition. This declares a factory function that
+the compiler uses to create an instance of the phase. This definition
+must be located in the global scope (not in any namespace).
+
+   This example has set the class within namespace `TL'. This is not
+mandated at all but eases writing code that makes use of TL classes.
+You can define your compiler phase in any namespace of your own.
+
+   In order to use this phase you have to add a new `compiler_phase' in
+the compiler configuration file (*note Configuration::) with the name
+of the shared object file, in this example likely to be
+`tl-helloworld.so'.
+
+
+File: mcxx-internals.info,  Node: Phase information,  Next: Phase parameters,  Up: Hello world
+
+9.1.1 Phase information
+-----------------------
+
+In order to better integrate with the rest of the compiler, a compiler
+phase should describe itself to the compiler. This is achieved with
+functions `TL::CompilerPhase::set_phase_name',
+`TL::CompilerPhase::set_phase_description'. These functions if called,
+must be invoked in the constructor.
+
+   The previous constructor can be rewritten like this:
+
+     HelloWorld()
+     {
+         set_phase_name("Hello world phase");
+         set_phase_description("This phase greets the user "
+             "both when loaded and when invoked per file.");
+
+         std::cout
+             << "Hello world (phase loaded)"
+             << std::endl;
+     }
+
+   When the compiler prints the help message (because of an error in
+the command line or a `--help' parameter) it will print the loaded
+phases under the current profile. The name of the phase and its
+description will be printed as well, if given.
+
+
+File: mcxx-internals.info,  Node: Phase parameters,  Prev: Phase information,  Up: Hello world
+
+9.1.2 Phase parameters
+----------------------
+
+Sometimes we want to allow that some aspects of a given phase be
+tweaked by the user. For instance, we could improve the hello world to
+greet somebody instead of the world itself.
+
+   To achieve this, in the constructor, we can call
+`register_parameter'. This function receives four parameters, namely
+the parameter name, a description of the parameter, a related storage
+value and a default value. In addition it returns a `TL::Signal1'
+(*note Functors and signals::) that can be connected to a function that
+will be invoked when the parameter is explicitly set from the command
+line.
+
+     #include "tl-compilerphase.hpp"
+     #include <iostream>
+     #include <string>
+
+     namespace TL
+     {
+         class HelloWorld : public CompilerPhase
+         {
+             private:
+                 std::string _hello_name;
+             public:
+                 HelloWorld()
+                 {
+                     set_phase_name("Hello world phase");
+                     set_phase_description("This phase greets the user "
+                         "both when loaded and when invoked per file.");
+
+                     register_parameter("hello-name",
+                         "Name to be greeted",
+                         _hello_name,
+                         "world");
+
+                     std::cout
+                         << "Hello " << _hello_name << " (phase loaded)"
+                         << std::endl;
+                 }
+
+                 void run(DTO& dto)
+                 {
+                     std::cout
+                         << "Hello " << _hello_name << " (phase run)"
+                         << std::endl;
+                 }
+         };
+     }
+
+   In the previous example `_hello_name' will be the reference where
+the given parameter will be stored. Sometimes we have to synthesize
+something after the given parameter (for instance a true or false flag
+or an integer value). Using a functor is useful. For instance, imagine
+that we want to have an integer parameter, having it stored in an
+integer rather than a plain string makes things easier.
+
+     #include <sstream>
+     ...
+     class HelloWorld : public CompilerPhase
+     {
+         private:
+             std::string _hello_age_str;
+             int _hello_age;
+         public:
+             HelloWorld()
+             {
+                 ...
+                 register_parameter("hello-age",
+                         "Age reminder",
+                         _hello_age_str
+                         "-1")
+                    .connect(functor(&HelloWorld::set_age, *this));
+                 ...
+             }
+
+             void set_age(std::string value)
+             {
+                 std::stringstream ss;
+
+                 ss << value;
+                 ss >> _hello_age;
+             }
+     };
+
+   In member function `set_age' we could check that the given number
+parameter is valid, enable other flags etc. There is a convenience
+function for boolean flags that eases parsing boolean options after
+strings, it is called `parse_boolean_option' declared in
+`tl-compilerphase.hpp'.
+
+   Parameters are documented when the compiler shows help message after
+the phase description. The default value is also shown. A parameter is
+passed by the compiler when the user specifies in the command line
+`--variable=name:value'. A `name' can be shared among several phases,
+each one will receive the specified `value'.
+
+
+File: mcxx-internals.info,  Node: Static call graph,  Prev: Hello world,  Up: Examples of TL
+
+9.2 Static call graph
+=====================
+
+* Menu:
+
+* Traversing the tree::
+* Static call graph compiler phase::
+* Getting function calls in a function definition::
+
+   This example concentrates on how to walk through the tree. There are
+several ways of finding things in a tree. The most powerful implies
+using a `DepthTraverse' but a given `AST_t' can also be used to get in
+a quicker way all the sons that satisfy a predicate.
+
+   In this example we will write a compiler phase that prints on the
+standard output a simple Graphviz (`http://www.graphviz.org') graph
+with the static call graph. To do this we will find each function
+definition in the code and find in it all function calls that we know
+they refer to existing functions.
+
+
+File: mcxx-internals.info,  Node: Traversing the tree,  Next: Static call graph compiler phase,  Up: Static call graph
+
+9.2.1 Traversing the tree
+-------------------------
+
+First thing we have to do is creating a `TraverseASTFunctor'. This
+_functor_ states whether a given tree matches. It also specifies if the
+traversal must recurse in this node. We will use
+`FunctionDefinition::predicate' that is a convenience predicate that
+matches function definitions.
+
+     class FunctionDefinitionASTFunctor : public TraverseASTFunctor
+     {
+       public:
+         ASTTraversalResult operator()(AST_t &a) const
+         {
+            if (FunctionDefinition::predicate(a))
+            {
+               return ast_traversal_result_helper(/* match */ true,
+                   /* recurse */ false);
+            }
+            else
+            {
+               return ast_traversal_result_helper(/* match */ false,
+                   /* recurse */ true);
+            }
+         }
+     };
+
+   A `TraverseASTFunctor' is a synonim for `Functor<ASTTraversalResult,
+AST_t>' so `ASTTraversalResult operator()(AST_t& a) const' needs to be
+implemented. Function `ast_traversal_result_helper' is a helper
+function to build values of `ASTTraversalResult' type. Basically it
+says to recurse always when a function definition tree is not found,
+and not to recurse when not found. Only function definitions will
+match, thus the traverse functors will be called only for function
+definitions.
+
+
+File: mcxx-internals.info,  Node: Static call graph compiler phase,  Next: Getting function calls in a function definition,  Prev: Traversing the tree,  Up: Static call graph
+
+9.2.2 Static call graph compiler phase
+--------------------------------------
+
+The compiler phase itself is defined as follows. It basically registers
+an object of the class above and links it with a functor of type
+`FunctionDefinitionFunctor', we will define it later.  This is done with
+`TL::DepthTraverse::add_functor'.
+
+     class StaticCallGraph : public CompilerPhase
+     {
+       public:
+         StaticCallGraph()
+         {
+         }
+
+         void run(DTO& dto)
+         {
+           std::cout << "digraph static_callgraph {" << std::endl;
+
+           AST_t ast = dto["translation_unit"];
+           ScopeLink scope_link = dto["scope_link"];
+
+           DepthTraverse depth_traverse;
+           FunctionDefinitionFunctor function_definition_functor;
+           FunctionDefinitionASTFunctor traverse_ast_functor;
+
+           depth_traverse.add_functor(traverse_ast_functor,
+             function_definition_functor);
+           depth_traverse.traverse(ast, scope_link);
+
+           std::cout << "}" << std::endl;
+         }
+     };
+
+   Objects stored in the DTO are identified by name. Compiler
+guarantees that at least `translation_unit' and `scope_link' will be
+always available.  They contain, respectively, the root tree of all the
+current file source and a suitable scope link. To add an object to the
+DTO use `add_object' with a `RefPtr<T>' object (*note Reference counted
+objects::).
+
+
+File: mcxx-internals.info,  Node: Getting function calls in a function definition,  Prev: Static call graph compiler phase,  Up: Static call graph
+
+9.2.3 Getting function calls in a function definition
+-----------------------------------------------------
+
+Once we have found a function definition we have to do something with
+it.
+
+     class FunctionDefinitionFunctor : public TraverseFunctor
+     {
+       public:
+         void preorder(Context ctx, AST_t ast)
+         {
+           ScopeLink sl = ctx.scope_link;
+           // Wrap into a FunctionDefinition since we know it is
+           FunctionDefinition function_definition(ast, sl);
+
+           // Get the function name
+           IdExpression function_name =
+             function_definition.get_function_name();
+
+           // Get the body of the function definition
+           Statement stm = function_definition.get_function_body();
+
+           // Now get all function calls
+           ObjectList<AST_t> function_calls =
+             stm.get_ast().depth_subtrees(
+                 PredicateAST<LANG_IS_FUNCTION_CALL>()
+                 );
+
+           std::cout
+             << function_name.prettyprint()
+             << " [label=\""
+             << function_name.prettyprint()
+             << "\"]"
+             << std::endl;
+
+           // For every function call
+           for (ObjectList<AST_t>::iterator it = function_calls.begin();
+               it != function_calls.end();
+               it++)
+           {
+             // Wrap it as an expression
+             Expression expr(*it, sl);
+
+             // Check if the called entity is a simple name
+             if (expr.get_called_expression().is_id_expression())
+             {
+               IdExpression id_expression =
+                 expr.get_called_expression().get_id_expression();
+               Symbol sym = id_expression.get_symbol();
+
+               // And check if it is a function (and not a pointer to
+               // function)
+               if (sym.is_function())
+               {
+                 std::cout
+                   << function_name.prettyprint()
+                   << " -> "
+                   << id_expression.prettyprint()
+                   << " [label=\""
+                   << id_expression.get_ast().get_locus()
+                   << "\"]"
+                   << std::endl;
+               }
+             }
+           }
+         }
+         void postorder(Context, AST_t) { }
+     };
+
+   For a given functor we can choose where to perform work, either at
+postorder or preorder. As a rule of thumb, when traversing trees most
+of the information gathering has to be done in preorder. Then in
+postorder we can use this information to implement transformations.
+
+   In the example above we first wrap in a `FunctionDefinition' the
+tree and then we get its body to get all function calls there. This is
+another way to traverse a tree, using `TL::AST_t::dept_subtrees' and a
+`Predicate<AST_t>'.  Then we check if the called expression is a simple
+thing, like `a' (an id-expression), and then we check using the related
+symbol if this is a function(1).
+
+   ---------- Footnotes ----------
+
+   (1) Note that this code would not work properly in C++ when calling
+overloads since all overloads would get mixed against one name
+
+
+File: mcxx-internals.info,  Node: Installation of mcxx,  Next: Function Index,  Prev: Examples of TL,  Up: Top
+
+10 Installation of mcxx
+***********************
+
+
+File: mcxx-internals.info,  Node: Function Index,  Next: Type Index,  Prev: Installation of mcxx,  Up: Top
+
+Function Index
+**************
+
+ [index ]
+* Menu:
+
+* extensible_schema_add_field:           Using the extensible structure.
+                                                               (line 19)
+* extensible_schema_init:                Using the extensible structure.
+                                                               (line 15)
+* extensible_struct_get_field_pointer:   Using the extensible structure.
+                                                               (line 30)
+* extensible_struct_get_field_pointer_lazy: Using the extensible structure.
+                                                               (line 42)
+* extensible_struct_init:                Using the extensible structure.
+                                                               (line 24)
+
+
+File: mcxx-internals.info,  Node: Type Index,  Next: Concept Index,  Prev: Function Index,  Up: Top
+
+Type Index
+**********
+
+ [index ]
+* Menu:
+
+* array_info_t:                          Array types.          (line 18)
+* array_tag:                             Array types.          (line 18)
+* AST:                                   Tree definition.      (line 33)
+* AST_tag:                               Tree definition.      (line 33)
+* base_class_info_t:                     Base classes.         (line 19)
+* base_class_info_tag:                   Base classes.         (line 19)
+* class_info_t:                          Class types.          (line 47)
+* class_information_tag:                 Class types.          (line 47)
+* decl_context_t:                        Context definition.   (line 37)
+* decl_context_tag:                      Context definition.   (line 37)
+* entity_specifiers_t:                   Entity specifiers.    (line 69)
+* entity_specifiers_tag:                 Entity specifiers.    (line 69)
+* enum_info_t:                           Enum types.           (line 15)
+* enum_information_tag:                  Enum types.           (line 15)
+* extensible_data_item_t:                Extensible structure. (line 26)
+* extensible_data_item_tag:              Extensible structure. (line 26)
+* extensible_schema_item_t:              Extensible schema.    (line 21)
+* extensible_schema_item_tag:            Extensible schema.    (line 21)
+* extensible_schema_t:                   Extensible schema.    (line 21)
+* extensible_schema_tag:                 Extensible schema.    (line 21)
+* extensible_struct_t:                   Extensible structure. (line 26)
+* extensible_struct_tag:                 Extensible structure. (line 26)
+* function_info_t:                       Function types.       (line 18)
+* function_tag:                          Function types.       (line 18)
+* parameter_info_t:                      Function types.       (line 45)
+* parameter_info_tag:                    Function types.       (line 45)
+* pointer_info_t:                        Pointer types.        (line 19)
+* pointer_info_tag:                      Pointer types.        (line 19)
+* scope_entry_t:                         Symbol definition.    (line 43)
+* scope_entry_tag:                       Symbol definition.    (line 43)
+* scope_link_entry_t:                    Scope link.           (line 41)
+* scope_link_entry_tag:                  Scope link.           (line 41)
+* scope_link_t:                          Scope link.           (line 28)
+* scope_link_tag:                        Scope link.           (line 28)
+* scope_t:                               Scopes.               (line 33)
+* scope_tag:                             Scopes.               (line 33)
+* simple_type_t:                         Direct types.         (line 64)
+* simple_type_tag:                       Direct types.         (line 64)
+* type_t:                                Type definition.      (line 38)
+* type_tag:                              Type definition.      (line 38)
+* vector_info_t:                         Vector types.         (line 15)
+* vector_tag:                            Vector types.         (line 15)
+
+
+File: mcxx-internals.info,  Node: Concept Index,  Prev: Type Index,  Up: Top
+
+Concept Index
+*************
+
+ [index ]
+* Menu:
+
+* abstract syntax tree:                  Abstract Syntax Tree.  (line 6)
+* additional steps:                      Additional steps.      (line 6)
+* ambiguity trees:                       Ambiguity trees.       (line 6)
+* array types:                           Array types.           (line 6)
+* base classes:                          Base classes.          (line 6)
+* class types:                           Class types.           (line 6)
+* compilation flow:                      Compilation flow overview.
+                                                                (line 6)
+* compilation pipeline:                  Compilation pipeline.  (line 6)
+* compilation process:                   Compilation process.   (line 6)
+* compiler phases:                       Compiler phases.       (line 6)
+* configuration:                         Configuration.         (line 6)
+* context definition:                    Context definition.    (line 6)
+* context free parsing:                  Context free parsing.  (line 6)
+* contexts <1>:                          Contexts.              (line 6)
+* contexts:                              Scopes and contexts.   (line 6)
+* creating source:                       Creating source.       (line 6)
+* current scope in a context:            Current scope in a context.
+                                                                (line 6)
+* cv qualification:                      Qualification.         (line 6)
+* dealing common language constructs:    Dealing with common language constructs.
+                                                                (line 6)
+* declaration context flags:             Declaration context flags.
+                                                                (line 6)
+* dependent typenames:                   Dependent typenames.   (line 6)
+* direct types:                          Direct types.          (line 6)
+* driver:                                Driver.                (line 6)
+* ellipsis type:                         Ellipsis type.         (line 6)
+* entity specifiers:                     Entity specifiers.     (line 6)
+* enum types:                            Enum types.            (line 6)
+* examples TL:                           Examples of TL.        (line 6)
+* extensible schema:                     Extensible schema.     (line 6)
+* extensible structure:                  Extensible structure.  (line 6)
+* extensible structure and schema:       Extensible structures and schemas.
+                                                                (line 6)
+* extensions:                            Extension handling.    (line 6)
+* function types:                        Function types.        (line 6)
+* functors signals:                      Functors and signals.  (line 6)
+* goal of the document:                  What is this document about.
+                                                                (line 6)
+* hello world:                           Hello world.           (line 6)
+* history:                               History.               (line 6)
+* installation mcxx:                     Installation of mcxx.  (line 6)
+* introduction:                          Introduction.          (line 6)
+* introduction TL:                       Introduction to TL.    (line 6)
+* list trees:                            List trees.            (line 6)
+* multifile:                             Multifile processing.  (line 6)
+* parsing the created source:            Parsing the created source.
+                                                                (line 6)
+* phase information:                     Phase information.     (line 6)
+* phase parameters:                      Phase parameters.      (line 6)
+* pointer types:                         Pointer types.         (line 6)
+* predicates ast:                        Predicates over AST.   (line 6)
+* preprocessing:                         Preprocessing.         (line 6)
+* prettyprinting:                        Prettyprinting.        (line 6)
+* reference counted objects:             Reference counted objects.
+                                                                (line 6)
+* scope link:                            Scope link.            (line 6)
+* scope relationships:                   Relationships between scopes.
+                                                                (line 6)
+* scopes <1>:                            Scopes.                (line 6)
+* scopes:                                Scopes and contexts.   (line 6)
+* semantic analysis:                     Semantic analysis.     (line 6)
+* static call graph:                     Static call graph.     (line 6)
+* structure document:                    Structure of this document.
+                                                                (line 6)
+* symbol definition:                     Symbol definition.     (line 6)
+* symbols:                               Symbols.               (line 6)
+* template arguments:                    Template arguments.    (line 6)
+* template nature:                       Template nature.       (line 6)
+* template parameters:                   Template parameters.   (line 6)
+* template representation:               Template representation.
+                                                                (line 6)
+* templates:                             Templates.             (line 6)
+* traversing the tree:                   Traversing the tree.   (line 6)
+* Traversing trees:                      Traversing trees.      (line 6)
+* tree definition:                       Tree definition.       (line 6)
+* tree types:                            Tree types.            (line 6)
+* type definition:                       Type definition.       (line 6)
+* type system:                           Type system.           (line 6)
+* type types:                            Type type.             (line 6)
+* types and symbols:                     Types and symbols.     (line 6)
+* unresolved function references:        Unresolved function reference types.
+                                                                (line 6)
+* using extensible structure:            Using the extensible structure.
+                                                                (line 6)
+* vector types:                          Vector types.          (line 6)
+* what is mcxx:                          What is mcxx?.         (line 6)
+* wrapper classes:                       Wrapper classes.       (line 6)
+
+
+
+Tag Table:
+Node: Top352
+Node: Introduction1050
+Node: What is this document about1272
+Node: What is mcxx?1876
+Ref: What is mcxx?-Footnote-13308
+Node: Structure of this document3353
+Node: Compilation process4781
+Node: Compilation flow overview5128
+Node: Preprocessing5813
+Node: Context free parsing6576
+Ref: Context free parsing-Footnote-18024
+Ref: Context free parsing-Footnote-28303
+Ref: Context free parsing-Footnote-38491
+Ref: Context free parsing-Footnote-48517
+Ref: Context free parsing-Footnote-58544
+Node: Semantic analysis8607
+Node: Compilation pipeline9657
+Node: Prettyprinting10621
+Node: Additional steps10984
+Node: Driver11289
+Node: Configuration11754
+Node: Extension handling13275
+Node: Multifile processing13917
+Node: Abstract Syntax Tree14448
+Node: Tree definition15523
+Node: Tree types18560
+Node: Ambiguity trees19518
+Node: List trees23623
+Node: Type system25418
+Node: Type type26497
+Node: Type definition29746
+Node: Qualification33744
+Node: Direct types35108
+Node: Enum types46625
+Node: Class types47334
+Node: Base classes51322
+Node: Dependent typenames52169
+Node: Pointer types53880
+Node: Array types54694
+Node: Function types56087
+Node: Vector types57732
+Ref: Vector types-Footnote-158486
+Node: Unresolved function reference types58527
+Node: Ellipsis type58942
+Ref: Ellipsis type-Footnote-159273
+Node: Symbols59316
+Node: Symbol definition59744
+Ref: Symbol definition-Footnote-165546
+Node: Entity specifiers65630
+Node: Types and symbols71907
+Node: Templates73381
+Ref: Templates-Footnote-173827
+Node: Template parameters73879
+Node: Template arguments75228
+Node: Template representation77551
+Node: Template nature79840
+Ref: Template nature-Footnote-182741
+Node: Scopes and contexts82830
+Node: Scopes83223
+Node: Relationships between scopes86058
+Ref: Relationships between scopes-Footnote-188711
+Ref: Relationships between scopes-Footnote-288782
+Node: Contexts88896
+Node: Context definition90088
+Node: Current scope in a context92516
+Node: Declaration context flags94887
+Node: Scope link98573
+Ref: Scope link-Footnote-199933
+Node: Extensible structures and schemas99995
+Node: Extensible schema100985
+Node: Extensible structure102188
+Node: Using the extensible structure103393
+Node: Introduction to TL105479
+Node: History105855
+Node: Compiler phases106500
+Node: Wrapper classes107887
+Ref: Wrapper classes-Footnote-1109160
+Node: Creating source109217
+Node: Parsing the created source110372
+Ref: Parsing the created source-Footnote-1111446
+Node: Dealing with common language constructs111764
+Node: Functors and signals113602
+Node: Predicates over AST115212
+Node: Traversing trees115839
+Node: Reference counted objects117137
+Node: Examples of TL118267
+Node: Hello world118755
+Node: Phase information121094
+Node: Phase parameters122133
+Node: Static call graph125668
+Node: Traversing the tree126505
+Node: Static call graph compiler phase127976
+Node: Getting function calls in a function definition129557
+Ref: Getting function calls in a function definition-Footnote-1132697
+Node: Installation of mcxx132832
+Node: Function Index132995
+Node: Type Index133891
+Node: Concept Index137105
+
+End Tag Table
