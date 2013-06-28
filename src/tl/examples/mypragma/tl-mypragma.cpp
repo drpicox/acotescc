@@ -22,6 +22,7 @@
 #include "tl-pragmasupport.hpp"
 #include "tl-langconstruct.hpp"
 
+#include <limits.h>
 #include <vector>
 #include <stack>
 #include <sstream>

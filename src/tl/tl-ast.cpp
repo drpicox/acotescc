@@ -24,6 +24,7 @@
 #include "tl-predicate.hpp"
 #include "cxx-ast.h"
 #include "cxx-utils.h"
+#include <cstring>
 #include <sstream>
 #include <cstdio>
 #include <cerrno>
